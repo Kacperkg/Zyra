@@ -149,6 +149,7 @@ The daily-check parser must also handle the format shown in the first supplied a
 - `ReportOn`, `PkgVersion`, `UniqueID`, `Database`, database version, and script information are report metadata;
 - checks are introduced by stable labels such as `Datafiles=`, `Backups=`, and `Tablespaces=`;
 - `OK!` means the report found no issue for that check, but an enabled/ignored rule must still be applied and stored;
+- `Backups=NOT_US` means the company using Zyra is not responsible for that database's backups. It is a non-failure business state and never creates a Backups ticket;
 - multi-line sections use trailing `\` characters as formatting/continuation markers; these must not become part of parsed values;
 - tabular sections must be parsed into individual resource findings rather than stored only as one block of text;
 - the `=@=` marker terminates the database-statistics block before the filesystem section;
@@ -292,7 +293,7 @@ When Archive Destinations is selected for that database, the non-empty invalid-d
 
 The ticket should include the destination ID, reported destination/status fields, complete Oracle error text available in the raw message, database, assessment time, hostname/IP, and a raw-email link. The supplied pasted formatting may not preserve the original fixed-width column alignment, so the parser fixture must be built from the original raw email before finalising the exact column mapping; Zyra must not silently swap the destination and status values.
 
-Other sections in this email show `OK!`; they are recorded as passed only when they are selected for this database. `Backups=NOT_US` is a distinct source value and must not be guessed to mean either passed or failed until its meaning and required behaviour are confirmed. Filesystem results create tickets only if Filesystem is selected/configured for this database and its rules are breached.
+Other sections in this email show `OK!`; they are recorded as passed only when they are selected for this database. `Backups=NOT_US` means backups for this database are not the responsibility of the company using Zyra. The assessment should display this as `Not managed by us` (or equivalent wording), and it must not create a Backups ticket. Filesystem results create tickets only if Filesystem is selected/configured for this database and its rules are breached.
 
 ## 7. Check configuration and thresholds
 
@@ -305,7 +306,7 @@ Initial rule shapes include:
 | Filesystem | Filesystem/mount name, enabled or ignored, maximum usage percentage. |
 | Tablespace | Tablespace name, enabled or ignored, minimum required free percentage. |
 | ASM space | Disk group/name, enabled or ignored, minimum required free percentage. |
-| Backup | Backup target/name, enabled or ignored, and parser-specific success criteria. |
+| Backup | Backup target/name, enabled or ignored, parser-specific success criteria, and support for `NOT_US` when backups are outside the company's responsibility. |
 | Archive destinations | Destination, enabled or ignored, and acceptable status. |
 | FRA/recovery area | Enabled or ignored and maximum usage/minimum free threshold. |
 | Missing email | Expected schedule window, timezone, grace period, enabled or ignored. |
@@ -558,6 +559,7 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 - Assertions that `Run by: user@hostname` produces the observed hostname, matches the correct configured database server, and snapshots its canonical hostname/IP onto both created tickets.
 - A golden-file test for the received-but-incomplete email that creates one Missing Email ticket, captures the Oracle errors and server details, and does not create tickets from the partial filesystem data.
 - A golden-file test for the Archive Destinations email that groups all invalid destination rows into one Archive Destinations ticket when that check is selected.
+- An assertion that `Backups=NOT_US` is shown as not managed by the company and never creates a Backups ticket.
 - Tests for rendered/copied email artefacts, including HTML entities, non-breaking spaces, tabs, bold markers, and escaped punctuation.
 - Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
 - Schedule tests across timezones, daylight-saving changes, grace periods, and late arrivals.
@@ -582,7 +584,7 @@ The MVP is ready for an internal pilot when:
    The supplied anonymised example creates exactly one Backups ticket and one Tablespace ticket for `UNDOTBS1`. Its unselected Indexes and Filesystem sections are skipped as `not_evaluated`; their content remains available in the raw email, and they create no tickets.
 7. A missing or malformed email creates the appropriate ticket only once per expected window/message.
    The supplied incomplete-script example creates one Missing Email ticket with the Oracle failure as evidence and does not create ordinary tickets from its partial body.
-   The supplied archive-destination example creates one grouped Archive Destinations ticket when that check is selected, regardless of how many invalid destination rows it contains.
+   The supplied archive-destination example creates one grouped Archive Destinations ticket when that check is selected, regardless of how many invalid destination rows it contains. Its `Backups=NOT_US` value creates no Backups ticket.
 8. Users can filter and sort Oracle tickets, view an issue timeline, comment, comment-and-close, close, and reopen.
 9. Ticket pages link to the client, database, source assessment/raw email, participants, and five similar issues.
    They also show the execution hostname and configured IP address captured when the assessment was processed.
@@ -627,15 +629,14 @@ The MVP is ready for an internal pilot when:
 2. What are the exact AM/PM schedule windows, timezone, and allowed grace periods for each database?
 3. What real email formats and script versions must the first parser support?
 4. Which checks are mandatory for the first pilot, and what are their precise pass/fail rules?
-5. What does the source value `Backups=NOT_US` mean, and how should it be represented?
-6. Should a late valid email automatically close its missing-email ticket or only add a recovery event for manual review?
-7. Should repeated failures update one open ticket (the recommendation here) or create a ticket per assessment?
-8. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
-9. Are client/database notes global notes, ticket-specific notes, or both?
-10. What retention period and access rules apply to raw emails and attachments?
-11. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
-12. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
-13. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
+5. Should a late valid email automatically close its missing-email ticket or only add a recovery event for manual review?
+6. Should repeated failures update one open ticket (the recommendation here) or create a ticket per assessment?
+7. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
+8. Are client/database notes global notes, ticket-specific notes, or both?
+9. What retention period and access rules apply to raw emails and attachments?
+10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
+11. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
+12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
 
 ## 19. Future extensions
 
