@@ -440,11 +440,12 @@ Users can change their own display details, password, theme, and profile picture
 
 ## 10. Authentication and account recovery
 
-- Access tokens, with an intended lifetime of approximately one day.
-- Refresh tokens, with an intended lifetime of approximately one week.
+- Access tokens expire after 15 minutes.
+- Refresh sessions expire seven days after sign-in. Refreshing access tokens does not extend this deadline; the user must sign in again when it is reached.
+- While the refresh session is valid, the application can obtain a new access token without requiring the user to sign in again.
 - Password-recovery support for user accounts.
 
-The token format, browser storage location, refresh behaviour, password-hashing algorithm, password-recovery mechanism, session revocation behaviour, and other authentication implementation details have not been decided.
+The token format, browser storage location, refresh-token rotation, password-hashing algorithm, password-recovery mechanism, session revocation behaviour, and other authentication implementation details have not been decided. Any access token issued near the seven-day session deadline must expire no later than that deadline so access cannot continue beyond it without signing in again.
 
 ## 11. Proposed architecture
 
@@ -606,6 +607,7 @@ Production parser fixtures must be anonymised and must not contain client creden
 The PoC is ready for an internal pilot when:
 
 1. An authorised user can sign in, refresh a session, log out, and recover a password.
+   Access tokens expire after 15 minutes (or earlier at the session deadline). Refreshing does not extend the fixed seven-day session; after that deadline, the user must sign in again.
 2. Admins can manage users/roles; trusted users can configure clients and databases without deleting them; normal users have read-only configuration access.
 3. A configured daily-check email is ingested exactly once, matched to the correct database, and stored with its raw source.
 4. Supported checks are parsed into durable results and evaluated using the database's effective configuration.
@@ -671,7 +673,7 @@ The PoC is ready for an internal pilot when:
 8. Are client/database notes global notes, ticket-specific notes, or both?
 9. What retention period and access rules apply to raw emails and attachments?
 10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
-11. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
+11. Which authentication details will be used, including token format, browser storage, refresh-token rotation, password hashing, and password recovery?
 12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
 
 ## 19. Future extensions
