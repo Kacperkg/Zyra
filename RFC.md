@@ -53,7 +53,7 @@ The full functional scope is in [documentation.md](documentation.md#2-scope).
 | Web application | React under `zyra-web/`, with source in `zyra-web/src/` |
 | Development database | PostgreSQL |
 | Hosting | Self-hosted and Dockerized |
-| Authentication requirements | 15-minute access tokens, a fixed seven-day refresh session requiring sign-in again at expiry, and password recovery |
+| Authentication requirements | JWT access tokens lasting 15 minutes, a fixed seven-day refresh session requiring sign-in again at expiry, and password recovery |
 | Users | Admin, trusted, and normal roles |
 | Appearance | Light theme by default, with a dark option |
 
@@ -61,7 +61,7 @@ The [documented folder structure](documentation.md#111-monorepo-layout) applies.
 
 Access tokens can be refreshed without another sign-in during the seven-day session. Refreshing does not extend the deadline measured from the original sign-in. Access tokens issued near that deadline must expire no later than the deadline, when the user must sign in again.
 
-Token storage and format, password hashing, refresh-token rotation, recovery implementation, mailbox access, file storage, production database setup, background processing, caching, queues, security, and operations remain undecided. The agreed choices do not select additional frameworks or infrastructure.
+JWT is the confirmed access-token format. Its signing algorithm and library, refresh-token format, token storage, password hashing, refresh-token rotation, recovery implementation, mailbox access, file storage, production database setup, background processing, caching, queues, security, and operations remain undecided. The agreed choices do not select additional frameworks or infrastructure.
 
 ## 5. Proposed design
 
@@ -186,7 +186,7 @@ Production transition is not decided here. Whether Zyra runs alongside the curre
 | Resource exclusions | How are ignored backup files handled within a grouped Backups issue? |
 | Permissions and notes | Can normal users close/reopen tickets, and are notes ticket-specific, database-specific, or both? |
 | Server identity | How are hostnames associated with IP addresses, and how are changes or unmatched hosts handled? |
-| Authentication | What token format/storage, hashing, refresh-token rotation, and recovery mechanism will be used? |
+| Authentication | Which JWT signing algorithm/library, refresh-token format, token storage, hashing, refresh-token rotation, and recovery mechanism will be used? |
 | Storage and operations | How are emails/media stored, and what retention, production hosting, security, and operational requirements apply? |
 | Transition | Is history imported, is a parallel pilot required, and what is the cutover/reversion plan? |
 | Release 1.0 | Which SQL and standby formats, rules, and scheduling behaviours must be supported? |

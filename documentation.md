@@ -440,12 +440,12 @@ Users can change their own display details, password, theme, and profile picture
 
 ## 10. Authentication and account recovery
 
-- Access tokens expire after 15 minutes.
+- Access tokens use JWT (JSON Web Token) and expire after 15 minutes.
 - Refresh sessions expire seven days after sign-in. Refreshing access tokens does not extend this deadline; the user must sign in again when it is reached.
 - While the refresh session is valid, the application can obtain a new access token without requiring the user to sign in again.
 - Password-recovery support for user accounts.
 
-The token format, browser storage location, refresh-token rotation, password-hashing algorithm, password-recovery mechanism, session revocation behaviour, and other authentication implementation details have not been decided. Any access token issued near the seven-day session deadline must expire no later than that deadline so access cannot continue beyond it without signing in again.
+JWT is the confirmed access-token format. The JWT signing algorithm and library, refresh-token format, browser storage location, refresh-token rotation, password-hashing algorithm, password-recovery mechanism, and session revocation behaviour remain undecided. Any access token issued near the seven-day session deadline must expire no later than that deadline so access cannot continue beyond it without signing in again.
 
 ## 11. Proposed architecture
 
@@ -673,7 +673,7 @@ The PoC is ready for an internal pilot when:
 8. Are client/database notes global notes, ticket-specific notes, or both?
 9. What retention period and access rules apply to raw emails and attachments?
 10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
-11. Which authentication details will be used, including token format, browser storage, refresh-token rotation, password hashing, and password recovery?
+11. Which JWT signing algorithm/library, refresh-token format, browser storage, refresh-token rotation, password hashing, and password-recovery mechanism will be used?
 12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
 
 ## 19. Future extensions
