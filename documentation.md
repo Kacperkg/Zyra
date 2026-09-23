@@ -92,11 +92,11 @@ Deletion should preferably be a reversible archive/soft-delete operation so hist
 
 ### 5.1 Recommended ingestion approach
 
-For the MVP, Zyra should act as a mailbox client using a dedicated mailbox and a provider-supported protocol/API (for example IMAP with TLS or Microsoft Graph, depending on the chosen mail provider). Polling is acceptable initially. The ingestion interface should be provider-neutral so webhooks or a different mail provider can be added later.
+For the MVP, relevant messages should be forwarded to a dedicated Zyra email address and the application should act as a client of that inbox. The exact mail provider, protocol/API, and whether ingestion uses polling or events have not been decided.
 
 Each message must be idempotent. Zyra should store the provider message ID and a deterministic content hash, and must not create a second assessment or ticket when the same email is forwarded or fetched twice.
 
-Processing should use durable jobs with retry and a dead-letter state. A transient parsing or mailbox failure must not silently lose an email.
+A temporary parsing or mailbox failure must not silently lose an email. The implementation approach for retries and failed processing has not been decided.
 
 ## 6. Email matching and parsing
 
@@ -163,7 +163,7 @@ An external-email caution banner is untrusted message content. It is neither an 
 
 ### 6.3 Initial check catalogue
 
-The initial Oracle catalogue should support the checks visible in the reference system and the requested core checks:
+The initial Oracle catalogue should support:
 
 - ASM space;
 - archive destinations;
@@ -199,7 +199,7 @@ Name       Total MB  Max. MB  Used MB  %Free
 UNDOTBS1   31744     31744    30900     2.7%
 ```
 
-As shown by the selected/excluded checks reference screen, each database controls which sections of the email Zyra evaluates. For this database, Backups and Tablespaces are selected for evaluation. The same email therefore produces exactly two tickets:
+Each database controls which sections of the email Zyra evaluates through its selected and excluded checks. For this database, Backups and Tablespaces are selected for evaluation. The same email therefore produces exactly two tickets:
 
 | Ticket | Parsed evidence | Ticketing rule |
 | --- | --- | --- |
@@ -246,7 +246,7 @@ If a delayed valid email arrives after a missing-email ticket was created, Zyra 
 
 ## 7. Check configuration and thresholds
 
-Configuration is per database. Each known check is selected or excluded, following the included/excluded interaction shown in the reference screen. Only selected checks are evaluated against their rules and can create tickets. An excluded or not-yet-configured section is skipped; its content remains available in the raw email but does not need to be parsed into resource-level results.
+Configuration is per database. Each known check is selected or excluded. Only selected checks are evaluated against their rules and can create tickets. An excluded or not-yet-configured section is skipped; its content remains available in the raw email but does not need to be parsed into resource-level results.
 
 Initial rule shapes include:
 
@@ -262,7 +262,7 @@ Initial rule shapes include:
 
 Checks or resources without matching configuration should be skipped as `not_evaluated` and may be displayed for configuration review. Zyra must not silently choose a threshold or create a ticket for an unconfigured check, mount, tablespace, disk group, or backup target.
 
-All configuration changes should be audited with actor, timestamp, before/after values, and an optional reason. An assessment must retain the effective rule snapshot used to calculate its result so historical outcomes do not change when thresholds are edited later.
+An assessment should retain the effective rule values used to calculate its result so historical outcomes do not change when thresholds are edited later. Any wider change-history or audit requirements have not been decided.
 
 ## 8. Tickets
 
@@ -382,75 +382,35 @@ Users can change their own display details, password, theme, and profile picture
 
 ## 10. Authentication and account recovery
 
-- Short-lived signed access tokens with a target lifetime of 24 hours.
-- Refresh tokens with a target lifetime of 7 days.
-- Refresh-token rotation on every use, with reuse detection and server-side revocation.
-- Refresh tokens stored in `Secure`, `HttpOnly`, `SameSite` cookies; do not store them in browser local storage.
-- Passwords hashed with Argon2id using deployment-appropriate parameters.
-- Rate limiting for login, refresh, and password-recovery endpoints.
-- Password recovery using a single-use, hashed, time-limited token delivered by email.
-- Password reset revokes all existing refresh sessions for that user.
-- Admins can disable an account and revoke its sessions.
-- Authentication and security-sensitive actions are audit logged.
+- Access tokens, with an intended lifetime of approximately one day.
+- Refresh tokens, with an intended lifetime of approximately one week.
+- Password-recovery support for user accounts.
 
-The 24-hour access-token lifetime is a requested starting point, but it increases the window in which a stolen access token remains useful. Before production, consider a 15–60 minute access token while retaining the 7-day rotating refresh session.
+The token format, browser storage location, refresh behaviour, password-hashing algorithm, password-recovery mechanism, session revocation behaviour, and other authentication implementation details have not been decided.
 
 ## 11. Proposed architecture
 
 ### 11.1 Monorepo layout
 
 ```text
-Zyra/
-├── apps/
-│   ├── api/               # Go HTTP API and background workers
-│   └── web/               # React frontend
-├── internal/              # Go domain/application packages
-│   ├── auth/
-│   ├── assessments/
-│   ├── email/
-│   ├── parsers/
-│   ├── rules/
-│   └── tickets/
-├── packages/              # Shared frontend packages/types if needed
-├── migrations/            # Database migrations
-├── deploy/                # Docker and self-hosting configuration
-├── docs/                  # Future detailed design/operations documents
-└── documentation.md
+zyra/
+├── zyra-api/    # Go backend
+└── zyra-web/    # React frontend
 ```
 
-This is a proposed layout, not a fixed implementation constraint.
+Zyra will be a monorepo with a Go backend and React frontend. Internal folder structures and supporting packages have not been decided.
 
 ### 11.2 Components
 
-- **React web app:** TypeScript single-page application, responsive UI, route-level code splitting, accessible components, light/dark themes.
-- **Go API:** JSON API, authorization, configuration, tickets, comments, search, uploads, and reporting.
-- **Worker processes:** mailbox polling, parsing, ticket generation, and missing-email schedule evaluation. They may initially run from the same Go binary in separate process modes.
-- **PostgreSQL:** primary transactional store and initial full-text/trigram search.
-- **Object storage:** raw MIME messages, sanitized rendered bodies, profile images, and comment attachments. An S3-compatible store allows self-hosted MinIO or external S3; local filesystem storage can be an MVP adapter for single-node installs.
-- **Optional Redis:** deferred until measurements justify it; useful later for distributed jobs, caching, or rate limiting.
+- **`zyra-api`:** Go backend.
+- **`zyra-web`:** React frontend.
+- **Development database:** PostgreSQL.
 
-### 11.3 Suggested runtime flow
-
-```text
-Mail server
-    │
-    ▼
-Mailbox ingestion worker ──► Raw immutable email storage
-    │
-    ▼
-Database/source matcher ──► Versioned parser ──► Rule evaluator
-                                                   │
-                          ┌────────────────────────┴───────────────┐
-                          ▼                                        ▼
-                  Assessment history                         Ticket service
-                                                                   │
-                                                                   ▼
-                                                           React application
-```
+The production database setup, background-processing model, file and email storage approach, caching, queues, and other supporting infrastructure have not been decided.
 
 ## 12. Core data model
 
-The following entities are expected; fields may be refined during implementation.
+The following entities describe the information Zyra is expected to manage. This is a conceptual model, not a final PostgreSQL schema; table names, relationships, and fields will be decided during implementation.
 
 - `users`, `roles`, `user_roles`, `refresh_sessions`, `password_reset_tokens`
 - `clients`
@@ -469,7 +429,6 @@ The following entities are expected; fields may be refined during implementation
 - `ticket_comments`
 - `ticket_events`
 - `attachments`
-- `audit_events`
 
 Important integrity rules:
 
@@ -483,7 +442,7 @@ Important integrity rules:
 
 ## 13. API outline
 
-The API should be versioned under `/api/v1`. A possible first surface is:
+The backend interface has not been designed. The following is only an illustrative list of operations Zyra will need; the route names, versioning, request formats, and transport details are not decided:
 
 ```text
 POST   /auth/login
@@ -522,50 +481,21 @@ GET    /admin/users
 GET    /admin/users/{userId}/closed-tickets
 ```
 
-List endpoints must use server-side filtering, stable sorting, and cursor or indexed page-based pagination.
+Ticket and assessment lists need filtering, stable sorting, and pagination. The implementation approach has not been decided.
 
-## 14. Security and privacy requirements
-
-- TLS is required outside local development.
-- Raw email content is untrusted input and must never be executed.
-- HTML email and rich-text comments must be sanitized with an allowlist; external images should be blocked or proxied to avoid tracking.
-- Raw-email access requires authorization and should redact or safely render dangerous content.
-- Validate attachment content type, extension, size, and image dimensions.
-- Apply CSRF protection where cookie authentication is used.
-- Use strict CORS, security headers, and a Content Security Policy.
-- Do not write email bodies, passwords, tokens, or sensitive attachment data to application logs.
-- Store secrets outside images and source control, using environment variables or Docker secrets.
-- Encrypt backups and document restore procedures.
-- Audit configuration, permission, login, ticket-status, and administrative changes.
-- Define a retention policy for raw emails, attachments, audit records, and user data before production.
-
-## 15. Performance and usability
+## 14. Performance and usability
 
 Loading speed is a primary requirement. Initial targets:
 
-- API p95 under 300 ms for common cached/indexed reads under normal internal load;
-- useful page content visible within 2 seconds on a typical business connection;
-- ticket/client/database search feedback within 300 ms after debounce;
-- no unbounded list or timeline queries;
-- dashboard counts calculated with indexed queries or refreshed summary data;
-- database indexes designed around ticket status, client, database, check type, assessment type, and created time;
-- route-level frontend code splitting and lazy loading for the rich-text editor;
+- pages, ticket lists, and searches should feel fast during normal use;
+- large ticket, assessment, comment, and history lists must remain usable;
+- loading and empty states should be clear;
 - responsive layouts and keyboard-accessible controls;
-- WCAG 2.1 AA colour contrast in both themes.
+- readable colour contrast in both themes.
 
-Search should start with PostgreSQL indexes and trigram/full-text search. A separate search service should be introduced only if real usage demonstrates the need.
+Exact performance targets and the search, pagination, caching, and frontend optimisation approaches have not been decided. They should be chosen after the expected usage and data volume are understood.
 
-## 16. Observability and operations
-
-- Structured application logs with correlation IDs.
-- Metrics for mailbox connection, ingestion lag, messages received, unmatched messages, parse failures, assessments, tickets created, missing windows, and job retries.
-- Health and readiness endpoints for containers.
-- Alert when mailbox ingestion has not succeeded within a configured interval.
-- Docker Compose development/self-hosting setup with persistent volumes.
-- Automated database migrations and documented backup/restore process.
-- Graceful shutdown so in-progress jobs can be retried safely.
-
-## 17. Testing strategy
+## 15. Testing strategy
 
 - Unit tests for every parser section and rule evaluator.
 - Golden-file tests using anonymised real email fixtures.
@@ -580,11 +510,11 @@ Search should start with PostgreSQL indexes and trigram/full-text search. A sepa
 - Permission tests for every protected backend operation.
 - Integration tests using PostgreSQL and a test mailbox/email fixture source.
 - End-to-end tests for login, ticket filtering, commenting, close/reopen, database configuration, and password recovery.
-- Security tests for XSS in email/comments, malicious attachments, refresh-token reuse, and access to another user's restricted operation.
+- Authentication, permission, and untrusted-content tests appropriate to the implementation choices made later.
 
 Production parser fixtures must be anonymised and must not contain client credentials or sensitive database information.
 
-## 18. MVP acceptance criteria
+## 16. MVP acceptance criteria
 
 The MVP is ready for an internal pilot when:
 
@@ -601,10 +531,10 @@ The MVP is ready for an internal pilot when:
    They also show the execution hostname and configured IP address captured when the assessment was processed.
 10. Admins can see which tickets a user closed.
 11. Light and dark themes work, with light as the default, and users can update their profile picture.
-12. The application starts through documented Docker commands, persists its data, exposes health checks, and has a tested restore procedure.
+12. The application can be run as a self-hosted Dockerized project and preserves its core data. The detailed deployment and operational requirements remain undecided.
 13. Permission, parser, schedule, and core end-to-end tests pass.
 
-## 19. Proposed delivery phases
+## 17. Proposed delivery phases
 
 ### Phase 0 — Discovery and fixtures
 
@@ -616,7 +546,7 @@ The MVP is ready for an internal pilot when:
 ### Phase 1 — Foundation
 
 - Monorepo, Docker development environment, PostgreSQL migrations.
-- Authentication, refresh sessions, password recovery, roles, users, and audit events.
+- Authentication, refresh sessions, password recovery, roles, and users.
 - Client/database configuration and basic responsive application shell.
 
 ### Phase 2 — Assessment pipeline
@@ -632,9 +562,9 @@ The MVP is ready for an internal pilot when:
 
 ### Phase 4 — Hardening and pilot
 
-- Security review, performance measurements, accessibility pass, operational metrics, backups/restores, parser-fixture expansion, and internal pilot.
+- Resolve the outstanding security, privacy, deployment, operations, and performance decisions; expand parser fixtures; and prepare the internal pilot.
 
-## 20. Decisions needed before implementation
+## 18. Decisions needed before implementation
 
 1. Which mail provider hosts the dedicated inbox, and should the MVP use IMAP, Microsoft Graph, Gmail API, or another supported API?
 2. What are the exact AM/PM schedule windows, timezone, and allowed grace periods for each database?
@@ -645,9 +575,11 @@ The MVP is ready for an internal pilot when:
 7. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
 8. Are client/database notes global notes, ticket-specific notes, or both?
 9. What retention period and access rules apply to raw emails and attachments?
-10. Is single-node local storage sufficient initially, or is S3-compatible object storage required from day one?
+10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
+11. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
+12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
 
-## 21. Future extensions
+## 19. Future extensions
 
 - SQL assessment checks and SQL issue dashboard/list.
 - Thirty-minute standby-alert ingestion and dedicated alert behaviour.
@@ -656,7 +588,3 @@ The MVP is ready for an internal pilot when:
 - Service-level reporting and trend analytics.
 - Parser plug-ins/version migration tools.
 - External ticketing or chat integrations.
-
----
-
-The two supplied screenshots are treated as interaction references rather than designs to reproduce exactly. The useful concepts retained here are per-database selected/excluded checks, a chronological ticket conversation, prominent status, comment-and-close behaviour, linked client/database context, participants, and recent similar issues. Zyra's final UI should modernise these patterns while preserving their operational clarity.
