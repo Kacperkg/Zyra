@@ -2,7 +2,7 @@
 
 Zyra is a self-hosted monitoring and ticket-management application for Oracle database health-check emails. It receives assessment emails produced by existing server-side scripts, parses their contents, records every assessment, and raises actionable tickets when a check fails or an expected email is missing.
 
-This document defines the initial product scope and proposed technical design. It is intended to guide an MVP; implementation has not started.
+This document defines the initial product scope and proposed technical design. The MVP is a proof of concept (PoC) used to validate the core Oracle daily-check workflow before Release 1.0; implementation has not started.
 
 ## 1. Goals
 
@@ -19,7 +19,7 @@ Zyra should:
 
 ## 2. Scope
 
-### 2.1 MVP scope
+### 2.1 Proof-of-concept (MVP) scope
 
 - Oracle daily-check emails, normally expected twice a day (AM and PM).
 - Email ingestion into a dedicated Zyra mailbox.
@@ -34,16 +34,21 @@ Zyra should:
 - Light theme by default, with a dark-theme option.
 - Docker-based self-hosting.
 
-### 2.2 Explicitly out of scope for the MVP
+### 2.2 Release 1.0 scope
 
 - SQL checks and SQL issue pages.
 - The separate standby-alert email that currently runs every 30 minutes.
+
+These two capabilities are intentionally excluded from the PoC so the daily-check workflow can be validated first. They are committed Release 1.0 scope rather than optional future ideas.
+
+The PoC data model and parser boundaries should allow SQL and standby assessments to be added for Release 1.0 without redesigning tickets or assessment history.
+
+### 2.3 Not currently planned for the PoC or Release 1.0
+
 - Sending commands to, or making changes on, monitored database servers.
 - Automatically fixing database problems.
 - SaaS/multi-tenant hosting and billing.
 - Native mobile applications.
-
-The data model and parser interfaces should still be extensible so SQL and standby assessments can be added later without redesigning tickets or assessment history.
 
 ## 3. Terminology
 
@@ -92,7 +97,7 @@ Deletion should preferably be a reversible archive/soft-delete operation so hist
 
 ### 5.1 Recommended ingestion approach
 
-For the MVP, relevant messages should be forwarded to a dedicated Zyra email address and the application should act as a client of that inbox. The exact mail provider, protocol/API, and whether ingestion uses polling or events have not been decided.
+For the PoC, relevant messages should be forwarded to a dedicated Zyra email address and the application should act as a client of that inbox. The exact mail provider, protocol/API, and whether ingestion uses polling or events have not been decided.
 
 Each message must be idempotent. Zyra should store the provider message ID and a deterministic content hash, and must not create a second assessment or ticket when the same email is forwarded or fetched twice.
 
@@ -243,7 +248,7 @@ Zyra must distinguish:
 
 The missing-email scheduler evaluates every enabled email source in its configured timezone. A schedule can define separate AM and PM windows, for example `18:30–22:00`. A valid assessment satisfies only the appropriate window. Each missed window creates at most one ticket.
 
-If a delayed valid email arrives after a missing-email ticket was created, Zyra should link the assessment to that ticket and mark it as no longer missing. Automatic closure is a product decision still to be confirmed; the safer MVP default is to leave the ticket open for a user to review.
+If a delayed valid email arrives after a missing-email ticket was created, Zyra should link the assessment to that ticket and mark it as no longer missing. Automatic closure is a product decision still to be confirmed; the PoC default is to leave the ticket open for a user to review.
 
 #### 6.5.1 Received-but-incomplete example
 
@@ -343,7 +348,7 @@ For the worked email example, suitable titles are:
 
 ### 8.2 Creation and deduplication
 
-The exact repeat-failure policy must be configurable or confirmed before implementation. Recommended MVP behaviour:
+The exact repeat-failure policy must be configurable or confirmed before implementation. Recommended PoC behaviour:
 
 - create one open ticket per database, assessment type, check type, and resource identity;
 - when the same failure occurs while that ticket is open, attach the new occurrence to it and update `last seen` and occurrence count;
@@ -404,9 +409,9 @@ The same responsive navigation appears throughout the application and includes:
 
 ### 9.2 Dashboard
 
-The MVP dashboard contains an `Open Oracle Issues` summary card with the current count and a link to the filtered Oracle issues page.
+The PoC dashboard contains an `Open Oracle Issues` summary card with the current count and a link to the filtered Oracle issues page.
 
-A future `Open SQL Issues` card may use the same component but is not part of the MVP and should not imply that SQL monitoring is active.
+Release 1.0 adds an `Open SQL Issues` card and its related SQL issue pages. The PoC must not imply that SQL monitoring is active before that work is implemented.
 
 ### 9.3 Client page
 
@@ -571,9 +576,9 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 
 Production parser fixtures must be anonymised and must not contain client credentials or sensitive database information.
 
-## 16. MVP acceptance criteria
+## 16. Proof-of-concept acceptance criteria
 
-The MVP is ready for an internal pilot when:
+The PoC is ready for an internal pilot when:
 
 1. An authorised user can sign in, refresh a session, log out, and recover a password.
 2. Admins can manage users/roles; trusted users can configure clients and databases without deleting them; normal users have read-only configuration access.
@@ -623,9 +628,15 @@ The MVP is ready for an internal pilot when:
 
 - Resolve the outstanding security, privacy, deployment, operations, and performance decisions; expand parser fixtures; and prepare the internal pilot.
 
+### Release 1.0 — Committed expansion
+
+- Add SQL checks and SQL issue pages.
+- Add ingestion and ticket behaviour for the standby-alert email that runs every 30 minutes.
+- Reuse the proven client, database, assessment, ticket, comment, role, and history workflows from the PoC.
+
 ## 18. Decisions needed before implementation
 
-1. Which mail provider hosts the dedicated inbox, and should the MVP use IMAP, Microsoft Graph, Gmail API, or another supported API?
+1. Which mail provider hosts the dedicated inbox, and should the PoC use IMAP, Microsoft Graph, Gmail API, or another supported API?
 2. What are the exact AM/PM schedule windows, timezone, and allowed grace periods for each database?
 3. What real email formats and script versions must the first parser support?
 4. Which checks are mandatory for the first pilot, and what are their precise pass/fail rules?
@@ -640,8 +651,6 @@ The MVP is ready for an internal pilot when:
 
 ## 19. Future extensions
 
-- SQL assessment checks and SQL issue dashboard/list.
-- Thirty-minute standby-alert ingestion and dedicated alert behaviour.
 - Additional mail providers and push/webhook ingestion.
 - Notifications and escalation rules.
 - Service-level reporting and trend analytics.
