@@ -65,7 +65,7 @@ The PoC data model and parser boundaries should allow SQL and standby assessment
 
 ## 4. Users and permissions
 
-Permissions must be enforced by the backend, not only hidden in the UI.
+Permissions must be enforced by the API, not only hidden in the UI.
 
 | Capability | Normal | Trusted | Admin |
 | --- | :---: | :---: | :---: |
@@ -452,16 +452,41 @@ The token format, browser storage location, refresh behaviour, password-hashing 
 
 ```text
 zyra/
-├── zyra-api/    # Go backend
-└── zyra-web/    # React frontend
+├── zyra-api/
+│   ├── cmd/
+│   │   └── server/
+│   │       └── main.go
+│   ├── doc/
+│   └── internal/
+│       ├── apperrors/
+│       ├── auth/
+│       ├── config/
+│       ├── database/
+│       ├── handlers/
+│       ├── middleware/
+│       ├── models/
+│       ├── repository/
+│       ├── routes/
+│       └── services/
+└── zyra-web/
+    └── src/
+        ├── api/
+        ├── assets/
+        ├── components/
+        ├── pages/
+        ├── routes/
+        ├── main.tsx
+        ├── router.tsx
+        ├── routeTree.gen.ts
+        └── styles.css
 ```
 
-Zyra will be a monorepo with a Go backend and React frontend. Internal folder structures and supporting packages have not been decided.
+Zyra will be a monorepo. The Go API lives in `zyra-api/`, while the React application lives in `zyra-web/` with its application source under `zyra-web/src/`.
 
 ### 11.2 Components
 
-- **`zyra-api`:** Go backend.
-- **`zyra-web`:** React frontend.
+- **`zyra-api`:** Go API.
+- **`zyra-web`:** React web application.
 - **Development database:** PostgreSQL.
 
 The production database setup, background-processing model, file and email storage approach, caching, queues, and other supporting infrastructure have not been decided.
@@ -500,7 +525,7 @@ Important integrity rules:
 
 ## 13. API outline
 
-The backend interface has not been designed. The following is only an illustrative list of operations Zyra will need; the route names, versioning, request formats, and transport details are not decided:
+The API interface has not been designed. The following is only an illustrative list of operations Zyra will need; the route names, versioning, request formats, and transport details are not decided:
 
 ```text
 POST   /auth/login
@@ -569,7 +594,7 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 - Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
 - Schedule tests across timezones, daylight-saving changes, grace periods, and late arrivals.
 - Idempotency and concurrency tests for duplicated messages and workers.
-- Permission tests for every protected backend operation.
+- Permission tests for every protected API operation.
 - Integration tests using PostgreSQL and a test mailbox/email fixture source.
 - End-to-end tests for login, ticket filtering, commenting, close/reopen, database configuration, and password recovery.
 - Authentication, permission, and untrusted-content tests appropriate to the implementation choices made later.
