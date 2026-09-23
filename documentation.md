@@ -244,6 +244,56 @@ The missing-email scheduler evaluates every enabled email source in its configur
 
 If a delayed valid email arrives after a missing-email ticket was created, Zyra should link the assessment to that ticket and mark it as no longer missing. Automatic closure is a product decision still to be confirmed; the safer MVP default is to leave the ticket open for a user to review.
 
+#### 6.5.1 Received-but-incomplete example
+
+The supplied Missing Email example is an email that arrived, but the daily-check script failed before producing a complete assessment. Its body begins with a PL/SQL failure and then contains only the later filesystem and script-information sections:
+
+```text
+ERROR at line 3:
+ORA-06550: line 3, column 17:
+PLS-00201: identifier 'XXXDCX.XXXX' must be declared
+ORA-06550: line 2, column 4:
+PL/SQL: Statement ignored
+
+Filesystem Usage
+...
+
+Script Info
+...
+```
+
+This must create one **Missing Email** ticket with a reason such as `Received but incomplete`. It is not the same as the scheduled `Not received` case.
+
+The ticket evidence should include:
+
+- the Oracle errors (`ORA-06550` and `PLS-00201`);
+- the incomplete or absent daily-check header and required database-check sections;
+- the received time;
+- the script path;
+- the execution hostname parsed from `Run by`;
+- a link to the raw email body.
+
+Completeness is determined using the expected structure for the matched email source and parser version. A trailing `Filesystem Usage` or `Script Info` section does not make the assessment valid when the main database-check output is missing. Partial check data in an incomplete email must not create ordinary check tickets, because the report did not complete reliably. The one Missing Email ticket represents the failed assessment run.
+
+The parser must tolerate formatting introduced by email rendering or copying, including bold markers, escaped underscores and backslashes, tabs, non-breaking spaces, and HTML character entities. These presentation characters are not part of Oracle identifiers, paths, hostnames, or error codes.
+
+### 6.6 Archive destinations example
+
+The supplied package-version `2.5` daily check contains a failed `ArchiveDestinations` section:
+
+```text
+ArchiveDestinations=
+Invalid Archive Destinations:
+Dest.Id    Destination    Status    Error
+2          ERROR          ifsd_stby ORA-03135: connectio...
+```
+
+When Archive Destinations is selected for that database, the non-empty invalid-destinations table creates one **Archive Destinations** ticket. All failing destination rows from the assessment belong to that single ticket rather than producing one ticket per row.
+
+The ticket should include the destination ID, reported destination/status fields, complete Oracle error text available in the raw message, database, assessment time, hostname/IP, and a raw-email link. The supplied pasted formatting may not preserve the original fixed-width column alignment, so the parser fixture must be built from the original raw email before finalising the exact column mapping; Zyra must not silently swap the destination and status values.
+
+Other sections in this email show `OK!`; they are recorded as passed only when they are selected for this database. `Backups=NOT_US` is a distinct source value and must not be guessed to mean either passed or failed until its meaning and required behaviour are confirmed. Filesystem results create tickets only if Filesystem is selected/configured for this database and its rules are breached.
+
 ## 7. Check configuration and thresholds
 
 Configuration is per database. Each known check is selected or excluded. Only selected checks are evaluated against their rules and can create tickets. An excluded or not-yet-configured section is skipped; its content remains available in the raw email but does not need to be parsed into resource-level results.
@@ -287,6 +337,8 @@ For the worked email example, suitable titles are:
 
 - `Backups check failed for <client> / IFSPRD – Daily Check`
 - `Tablespace check failed for <client> / IFSPRD – UNDOTBS1 at 2.7% free`
+- `Missing email for <client> / <database> – Received but incomplete`
+- `Archive Destinations check failed for <client> / IFSDCDB – Daily Check`
 
 ### 8.2 Creation and deduplication
 
@@ -504,6 +556,9 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 - An assertion that all backup rows are grouped into one Backups ticket rather than creating a ticket for each affected datafile.
 - Assertions that the external-email caution banner, line-continuation characters, and `=@=` delimiter do not corrupt report metadata or check sections.
 - Assertions that `Run by: user@hostname` produces the observed hostname, matches the correct configured database server, and snapshots its canonical hostname/IP onto both created tickets.
+- A golden-file test for the received-but-incomplete email that creates one Missing Email ticket, captures the Oracle errors and server details, and does not create tickets from the partial filesystem data.
+- A golden-file test for the Archive Destinations email that groups all invalid destination rows into one Archive Destinations ticket when that check is selected.
+- Tests for rendered/copied email artefacts, including HTML entities, non-breaking spaces, tabs, bold markers, and escaped punctuation.
 - Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
 - Schedule tests across timezones, daylight-saving changes, grace periods, and late arrivals.
 - Idempotency and concurrency tests for duplicated messages and workers.
@@ -526,6 +581,8 @@ The MVP is ready for an internal pilot when:
 6. Enabled failures create correctly titled tickets; ignored checks do not.
    The supplied anonymised example creates exactly one Backups ticket and one Tablespace ticket for `UNDOTBS1`. Its unselected Indexes and Filesystem sections are skipped as `not_evaluated`; their content remains available in the raw email, and they create no tickets.
 7. A missing or malformed email creates the appropriate ticket only once per expected window/message.
+   The supplied incomplete-script example creates one Missing Email ticket with the Oracle failure as evidence and does not create ordinary tickets from its partial body.
+   The supplied archive-destination example creates one grouped Archive Destinations ticket when that check is selected, regardless of how many invalid destination rows it contains.
 8. Users can filter and sort Oracle tickets, view an issue timeline, comment, comment-and-close, close, and reopen.
 9. Ticket pages link to the client, database, source assessment/raw email, participants, and five similar issues.
    They also show the execution hostname and configured IP address captured when the assessment was processed.
@@ -570,14 +627,15 @@ The MVP is ready for an internal pilot when:
 2. What are the exact AM/PM schedule windows, timezone, and allowed grace periods for each database?
 3. What real email formats and script versions must the first parser support?
 4. Which checks are mandatory for the first pilot, and what are their precise pass/fail rules?
-5. Should a late valid email automatically close its missing-email ticket or only add a recovery event for manual review?
-6. Should repeated failures update one open ticket (the recommendation here) or create a ticket per assessment?
-7. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
-8. Are client/database notes global notes, ticket-specific notes, or both?
-9. What retention period and access rules apply to raw emails and attachments?
-10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
-11. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
-12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
+5. What does the source value `Backups=NOT_US` mean, and how should it be represented?
+6. Should a late valid email automatically close its missing-email ticket or only add a recovery event for manual review?
+7. Should repeated failures update one open ticket (the recommendation here) or create a ticket per assessment?
+8. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
+9. Are client/database notes global notes, ticket-specific notes, or both?
+10. What retention period and access rules apply to raw emails and attachments?
+11. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
+12. Which authentication details will be used, including token format, browser storage, refresh behaviour, password hashing, and password recovery?
+13. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
 
 ## 19. Future extensions
 
