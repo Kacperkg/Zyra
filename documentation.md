@@ -135,7 +135,7 @@ Each check result contains:
 
 - stable check type;
 - display title;
-- result: `passed`, `failed`, `warning`, `ignored`, or `unknown`;
+- result: `passed`, `failed`, `warning`, `ignored`, `not_evaluated`, or `unknown`;
 - measured value(s) and unit, where applicable;
 - configured threshold used for evaluation;
 - short summary suitable for a ticket title;
@@ -179,13 +179,10 @@ The initial Oracle catalogue should support the checks visible in the reference 
 - recovery area/FRA space;
 - segments;
 - tablespaces;
-- undo space (derived from an undo tablespace finding);
 - malformed/incomplete email;
 - missing expected email.
 
 Check identifiers should be machine-friendly stable values such as `archive_destinations` and `filesystem`; display names can change without breaking history.
-
-Undo space should use a stable identifier such as `undo_space`. In the supplied format it is reported inside the `Tablespaces` section. A configured resource classification or an explicit, case-insensitive undo naming rule (for example `UNDOTBS1`) maps that row to `undo_space`; ordinary tablespace rows remain `tablespace_space`. The classification used must be retained with the result rather than inferred again when historical data is displayed.
 
 ### 6.4 Worked parsing example
 
@@ -202,14 +199,21 @@ Name       Total MB  Max. MB  Used MB  %Free
 UNDOTBS1   31744     31744    30900     2.7%
 ```
 
-For the database configuration described by the user, this single assessment produces exactly two tickets:
+As shown by the selected/excluded checks reference screen, each database controls which sections of the email Zyra evaluates. For this database, Backups and Tablespaces are selected for evaluation. The same email therefore produces exactly two tickets:
 
 | Ticket | Parsed evidence | Ticketing rule |
 | --- | --- | --- |
-| Backups | The `Backups` section contains multiple datafiles needing backup and their last-completed timestamps. | The Backups check is enabled and the non-empty failure list breaches its rule. Create one Backups ticket for the assessment, with the affected files attached as structured evidence; do not create one ticket per file. |
-| Undo | `UNDOTBS1` has `2.7%` free in the `Tablespaces` section. | The row is classified as undo space, the Undo check is enabled, and `2.7%` is below the configured minimum-free threshold. Create one Undo ticket for resource `UNDOTBS1`. |
+| Backups | The `Backups` section contains multiple datafiles needing backup and their last-completed timestamps. | The Backups check is selected and the non-empty failure list breaches its rule. Create **one grouped Backups ticket** for the assessment, with every affected file attached as structured evidence. Never create one ticket per datafile from this section. |
+| Tablespace (`UNDOTBS1`) | `UNDOTBS1` has `2.7%` free in the `Tablespaces` section. | This is a Tablespace check. The configured minimum-free threshold is breached, so create one Tablespace ticket for resource `UNDOTBS1`. `UNDO` is part of the affected tablespace's name, not a separate check type. |
 
-The email also contains unusable indexes and filesystem usage values, including drive `E:` at `91%`. These findings must be parsed and retained. They do **not** create tickets for this example because their checks/resources are excluded or their configured ticket thresholds are not breached. Sections containing `OK!` are recorded as passed. Therefore, the presence of a non-empty section alone is not a universal ticket rule.
+The email also contains unusable indexes and filesystem usage values, including drive `E:` at `91%`. Indexes and Filesystem are **not selected/configured** for this database example, so their sections are not evaluated and cannot create tickets. Their contents remain available in the immutable raw email; Zyra may record only that the sections were skipped as `not_evaluated`. Once an administrator or trusted user selects and configures those checks, later assessments can evaluate them. Sections containing `OK!` count as passed only when that check is selected for evaluation. Therefore, the presence of a non-empty section alone is not a universal ticket rule.
+
+In summary, the expected outcome for this assessment is exactly:
+
+1. One Tablespace ticket for `UNDOTBS1` at `2.7%` free.
+2. One Backups ticket containing the complete list of affected datafiles.
+
+No additional ticket is created for each backup row, and no Indexes or Filesystem ticket is created because those checks are not selected for this database.
 
 The expected high-level parser output is:
 
@@ -221,7 +225,7 @@ The expected high-level parser output is:
   "packageVersion": "2.5",
   "ticketCandidates": [
     { "checkType": "backups", "resources": "parsed from all backup rows" },
-    { "checkType": "undo_space", "resource": "UNDOTBS1", "freePercent": 2.7 }
+    { "checkType": "tablespace", "resource": "UNDOTBS1", "freePercent": 2.7 }
   ],
   "ticketsCreated": 2
 }
@@ -242,7 +246,7 @@ If a delayed valid email arrives after a missing-email ticket was created, Zyra 
 
 ## 7. Check configuration and thresholds
 
-Configuration is per database. Each known check is enabled or excluded, following the included/excluded interaction shown in the reference screen. Excluded checks are still recorded when present in an email but do not raise tickets.
+Configuration is per database. Each known check is selected or excluded, following the included/excluded interaction shown in the reference screen. Only selected checks are evaluated against their rules and can create tickets. An excluded or not-yet-configured section is skipped; its content remains available in the raw email but does not need to be parsed into resource-level results.
 
 Initial rule shapes include:
 
@@ -250,14 +254,13 @@ Initial rule shapes include:
 | --- | --- |
 | Filesystem | Filesystem/mount name, enabled or ignored, maximum usage percentage. |
 | Tablespace | Tablespace name, enabled or ignored, minimum required free percentage. |
-| Undo space | Undo tablespace name/classification, enabled or ignored, minimum required free percentage. |
 | ASM space | Disk group/name, enabled or ignored, minimum required free percentage. |
 | Backup | Backup target/name, enabled or ignored, and parser-specific success criteria. |
 | Archive destinations | Destination, enabled or ignored, and acceptable status. |
 | FRA/recovery area | Enabled or ignored and maximum usage/minimum free threshold. |
 | Missing email | Expected schedule window, timezone, grace period, enabled or ignored. |
 
-Unknown resources found by a parser should be displayed for review. Zyra must not silently choose a threshold for a newly discovered mount, tablespace, disk group, or backup target.
+Checks or resources without matching configuration should be skipped as `not_evaluated` and may be displayed for configuration review. Zyra must not silently choose a threshold or create a ticket for an unconfigured check, mount, tablespace, disk group, or backup target.
 
 All configuration changes should be audited with actor, timestamp, before/after values, and an optional reason. An assessment must retain the effective rule snapshot used to calculate its result so historical outcomes do not change when thresholds are edited later.
 
@@ -283,7 +286,7 @@ Suggested title format: `Backups check failed for <client> / <database> – Dail
 For the worked email example, suitable titles are:
 
 - `Backups check failed for <client> / IFSPRD – Daily Check`
-- `Undo check failed for <client> / IFSPRD – UNDOTBS1 at 2.7% free`
+- `Tablespace check failed for <client> / IFSPRD – UNDOTBS1 at 2.7% free`
 
 ### 8.2 Creation and deduplication
 
@@ -566,8 +569,9 @@ Search should start with PostgreSQL indexes and trigram/full-text search. A sepa
 
 - Unit tests for every parser section and rule evaluator.
 - Golden-file tests using anonymised real email fixtures.
-- A golden-file test for the supplied package-version `2.5` daily check that asserts two tickets only: Backups and Undo.
-- Assertions that the same fixture still records unusable indexes and all filesystem values without creating Indexes or Filesystem tickets under the fixture's database configuration.
+- A golden-file test for the supplied package-version `2.5` daily check that asserts two tickets only: Backups and Tablespace (`UNDOTBS1`).
+- Assertions that the same fixture skips Indexes and Filesystem as `not_evaluated`, without resource-level evaluation or tickets, because those checks are not selected/configured in this example.
+- An assertion that all backup rows are grouped into one Backups ticket rather than creating a ticket for each affected datafile.
 - Assertions that the external-email caution banner, line-continuation characters, and `=@=` delimiter do not corrupt report metadata or check sections.
 - Assertions that `Run by: user@hostname` produces the observed hostname, matches the correct configured database server, and snapshots its canonical hostname/IP onto both created tickets.
 - Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
@@ -590,7 +594,7 @@ The MVP is ready for an internal pilot when:
 4. Supported checks are parsed into durable results and evaluated using the database's effective configuration.
 5. Passed and failed assessments remain visible in history.
 6. Enabled failures create correctly titled tickets; ignored checks do not.
-   The supplied anonymised example creates exactly one Backups ticket and one Undo ticket, while retaining its Indexes and Filesystem findings without ticketing them under the example configuration.
+   The supplied anonymised example creates exactly one Backups ticket and one Tablespace ticket for `UNDOTBS1`. Its unselected Indexes and Filesystem sections are skipped as `not_evaluated`; their content remains available in the raw email, and they create no tickets.
 7. A missing or malformed email creates the appropriate ticket only once per expected window/message.
 8. Users can filter and sort Oracle tickets, view an issue timeline, comment, comment-and-close, close, and reopen.
 9. Ticket pages link to the client, database, source assessment/raw email, participants, and five similar issues.
