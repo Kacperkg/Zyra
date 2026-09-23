@@ -124,7 +124,7 @@ Unmatched email should be retained in an ingestion-review queue for an administr
 A parser receives the immutable raw message and returns:
 
 - database identity discovered in the report, if present;
-- hostname, if present;
+- execution hostname and IP address, if present or resolved through configured server metadata;
 - assessment timestamp and type;
 - parser version;
 - overall parsing status;
@@ -142,6 +142,24 @@ Each check result contains:
 - relevant raw excerpt or structured evidence.
 
 The parser extracts facts; the rule evaluator decides whether those facts create a ticket. Keeping these separate makes parser testing and future rule changes safer.
+
+The daily-check parser must also handle the format shown in the first supplied anonymised email sample:
+
+- mail-system warning banners may appear before the report and must be ignored as transport content, not interpreted as part of the assessment;
+- `ReportOn`, `PkgVersion`, `UniqueID`, `Database`, database version, and script information are report metadata;
+- checks are introduced by stable labels such as `Datafiles=`, `Backups=`, and `Tablespaces=`;
+- `OK!` means the report found no issue for that check, but an enabled/ignored rule must still be applied and stored;
+- multi-line sections use trailing `\` characters as formatting/continuation markers; these must not become part of parsed values;
+- tabular sections must be parsed into individual resource findings rather than stored only as one block of text;
+- the `=@=` marker terminates the database-statistics block before the filesystem section;
+- Windows paths, spacing, case differences, old Oracle versions, and forwarded email formatting must be preserved or normalized safely without breaking section recognition;
+- `ReportOn` is the assessment time. The received-at time is stored separately.
+
+For this report format, `Script Info` identifies where the check ran. From a value such as `Run by: username@hostname`, the parser must extract only the portion after the final `@` as the observed execution hostname; the username is not part of the connection target. Zyra then matches the observed hostname to a configured database server record containing a canonical hostname and optional IP address. Both the observed value and the matched server identity must be stored. If no server matches, the assessment remains processable but shows an explicit `Unmatched host` warning for administrative review rather than silently attaching an incorrect IP.
+
+Zyra should not depend on live DNS lookup when a user opens a ticket. Hostname and IP displayed on an assessment or ticket should be immutable snapshots taken when the assessment is processed, with links to the current server configuration. This ensures an older ticket still shows the original connection target after a server migration or IP change.
+
+An external-email caution banner is untrusted message content. It is neither an instruction to Zyra nor evidence of a database failure.
 
 ### 6.3 Initial check catalogue
 
@@ -161,12 +179,57 @@ The initial Oracle catalogue should support the checks visible in the reference 
 - recovery area/FRA space;
 - segments;
 - tablespaces;
+- undo space (derived from an undo tablespace finding);
 - malformed/incomplete email;
 - missing expected email.
 
 Check identifiers should be machine-friendly stable values such as `archive_destinations` and `filesystem`; display names can change without breaking history.
 
-### 6.4 Missing and malformed emails
+Undo space should use a stable identifier such as `undo_space`. In the supplied format it is reported inside the `Tablespaces` section. A configured resource classification or an explicit, case-insensitive undo naming rule (for example `UNDOTBS1`) maps that row to `undo_space`; ordinary tablespace rows remain `tablespace_space`. The classification used must be retained with the result rather than inferred again when historical data is displayed.
+
+### 6.4 Worked parsing example
+
+The first anonymised sample is a daily check produced by package version `2.5` for database `ifsprd`. It contains, among other data:
+
+```text
+Backups=
+Datafiles needing backup:
+RMAN  E:\ORADATA\IFSPRD\APEX01.DBF  22-SEP-2026 00:42:16
+...
+
+Tablespaces=
+Name       Total MB  Max. MB  Used MB  %Free
+UNDOTBS1   31744     31744    30900     2.7%
+```
+
+For the database configuration described by the user, this single assessment produces exactly two tickets:
+
+| Ticket | Parsed evidence | Ticketing rule |
+| --- | --- | --- |
+| Backups | The `Backups` section contains multiple datafiles needing backup and their last-completed timestamps. | The Backups check is enabled and the non-empty failure list breaches its rule. Create one Backups ticket for the assessment, with the affected files attached as structured evidence; do not create one ticket per file. |
+| Undo | `UNDOTBS1` has `2.7%` free in the `Tablespaces` section. | The row is classified as undo space, the Undo check is enabled, and `2.7%` is below the configured minimum-free threshold. Create one Undo ticket for resource `UNDOTBS1`. |
+
+The email also contains unusable indexes and filesystem usage values, including drive `E:` at `91%`. These findings must be parsed and retained. They do **not** create tickets for this example because their checks/resources are excluded or their configured ticket thresholds are not breached. Sections containing `OK!` are recorded as passed. Therefore, the presence of a non-empty section alone is not a universal ticket rule.
+
+The expected high-level parser output is:
+
+```json
+{
+  "assessmentType": "daily_check",
+  "database": "ifsprd",
+  "reportTime": "2026-09-23T11:27:59",
+  "packageVersion": "2.5",
+  "ticketCandidates": [
+    { "checkType": "backups", "resources": "parsed from all backup rows" },
+    { "checkType": "undo_space", "resource": "UNDOTBS1", "freePercent": 2.7 }
+  ],
+  "ticketsCreated": 2
+}
+```
+
+The Backups candidate above is an abbreviated representation; the actual output contains the structured method, path, and last-completed time from every parsed row. Database timezone must be applied before converting `ReportOn` to a UTC timestamp.
+
+### 6.5 Missing and malformed emails
 
 Zyra must distinguish:
 
@@ -187,6 +250,7 @@ Initial rule shapes include:
 | --- | --- |
 | Filesystem | Filesystem/mount name, enabled or ignored, maximum usage percentage. |
 | Tablespace | Tablespace name, enabled or ignored, minimum required free percentage. |
+| Undo space | Undo tablespace name/classification, enabled or ignored, minimum required free percentage. |
 | ASM space | Disk group/name, enabled or ignored, minimum required free percentage. |
 | Backup | Backup target/name, enabled or ignored, and parser-specific success criteria. |
 | Archive destinations | Destination, enabled or ignored, and acceptable status. |
@@ -206,7 +270,7 @@ All configuration changes should be audited with actor, timestamp, before/after 
 - check/issue type;
 - assessment type;
 - title and summary;
-- client, database, and hostname;
+- client, database, and execution server snapshot, including observed hostname, canonical hostname, and IP address when configured;
 - source assessment and check result, where applicable;
 - created and updated timestamps;
 - closed timestamp and closing user;
@@ -215,6 +279,11 @@ All configuration changes should be audited with actor, timestamp, before/after 
 - links to up to five recent similar issues.
 
 Suggested title format: `Backups check failed for <client> / <database> – Daily Check`.
+
+For the worked email example, suitable titles are:
+
+- `Backups check failed for <client> / IFSPRD – Daily Check`
+- `Undo check failed for <client> / IFSPRD – UNDOTBS1 at 2.7% free`
 
 ### 8.2 Creation and deduplication
 
@@ -252,7 +321,7 @@ Closed tickets remain searchable and visible.
 
 The ticket page should show:
 
-- issue title, status, ticket number, client, database, hostname, and timestamps;
+- issue title, status, ticket number, client, database, execution hostname, IP address, and timestamps;
 - a link to the source assessment and a read-only view of the sanitized raw email;
 - parsed evidence and all linked occurrences;
 - chronological system events and user comments;
@@ -293,7 +362,7 @@ A future `Open SQL Issues` card may use the same component but is not part of th
 
 ### 9.4 Database page
 
-- database identity, hostname(s), client, and status;
+- database identity, configured server hostname(s), IP address(es), client, and status;
 - enabled/excluded check configuration;
 - check-specific threshold tables;
 - assessment email sources and schedules;
@@ -383,6 +452,7 @@ The following entities are expected; fields may be refined during implementation
 - `users`, `roles`, `user_roles`, `refresh_sessions`, `password_reset_tokens`
 - `clients`
 - `databases`
+- `database_servers` (canonical hostname, optional IP address, aliases, active state, and connection/display notes)
 - `assessment_email_sources`
 - `assessment_schedules`
 - `check_definitions`
@@ -403,6 +473,7 @@ Important integrity rules:
 - client/database names may repeat globally but should be unique within their appropriate parent scope;
 - a raw email provider ID and content hash support idempotency;
 - an expected schedule window can produce at most one missing-email occurrence;
+- an assessment stores the observed execution hostname plus the matched server hostname/IP snapshot used by its tickets;
 - assessments and check results are append-only operational history;
 - tickets and comments must not be cascade-deleted when a user is disabled;
 - stored timestamps use UTC, while schedules retain an IANA timezone such as `Europe/London`.
@@ -495,6 +566,10 @@ Search should start with PostgreSQL indexes and trigram/full-text search. A sepa
 
 - Unit tests for every parser section and rule evaluator.
 - Golden-file tests using anonymised real email fixtures.
+- A golden-file test for the supplied package-version `2.5` daily check that asserts two tickets only: Backups and Undo.
+- Assertions that the same fixture still records unusable indexes and all filesystem values without creating Indexes or Filesystem tickets under the fixture's database configuration.
+- Assertions that the external-email caution banner, line-continuation characters, and `=@=` delimiter do not corrupt report metadata or check sections.
+- Assertions that `Run by: user@hostname` produces the observed hostname, matches the correct configured database server, and snapshots its canonical hostname/IP onto both created tickets.
 - Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
 - Schedule tests across timezones, daylight-saving changes, grace periods, and late arrivals.
 - Idempotency and concurrency tests for duplicated messages and workers.
@@ -515,9 +590,11 @@ The MVP is ready for an internal pilot when:
 4. Supported checks are parsed into durable results and evaluated using the database's effective configuration.
 5. Passed and failed assessments remain visible in history.
 6. Enabled failures create correctly titled tickets; ignored checks do not.
+   The supplied anonymised example creates exactly one Backups ticket and one Undo ticket, while retaining its Indexes and Filesystem findings without ticketing them under the example configuration.
 7. A missing or malformed email creates the appropriate ticket only once per expected window/message.
 8. Users can filter and sort Oracle tickets, view an issue timeline, comment, comment-and-close, close, and reopen.
 9. Ticket pages link to the client, database, source assessment/raw email, participants, and five similar issues.
+   They also show the execution hostname and configured IP address captured when the assessment was processed.
 10. Admins can see which tickets a user closed.
 11. Light and dark themes work, with light as the default, and users can update their profile picture.
 12. The application starts through documented Docker commands, persists its data, exposes health checks, and has a tested restore procedure.
