@@ -78,7 +78,7 @@ Without that variable, the PostgreSQL workflow test is skipped. Unit tests still
 - Lists return lightweight ticket summaries; ticket details, 50-event timeline pages and raw email are separate requests.
 - New tickets begin with a system findings event built from assessment-time findings and thresholds.
 - Comment, comment-free Close, required-comment Comment and close, and Reopen are separate actions. Comments on closed tickets do not reopen them.
-- Similar issues return up to five previous tickets for the same client, database and issue type, newest first, excluding the current ticket.
+- Similar issues return up to five tickets for the same client, database and issue type, excluding the current ticket. Pin the newest open match, then fill with recent remaining matches regardless of status. Matches may be older or newer; creation time then ID descending defines recency. Selection uses one database query and never merges or closes tickets.
 - Ticket filters support client/database/check/assessment/status/ticket number and created-date boundaries, with allowlisted sorting including client and database names.
 - Targeted PostgreSQL indexes support ticket lists, similar issues, event timelines, participants, closure history and assessment schedule/source lookups.
 
@@ -90,7 +90,7 @@ Without that variable, the PostgreSQL workflow test is skipped. Unit tests still
 - Retain historical assessment results independently of ticket status. Automatic closure is deferred. Assessment Unresolved/Resolved semantics and repeated-failure grouping remain undecided.
 - Keep clients shared across database engines; SQL functionality remains deferred to Release 1.0.
 
-The product documentation also defines the two-column Oracle/SQL dashboard, navbar dropdowns, avatar placement, green accent and neutral charcoal dark theme. Those are frontend requirements; the mockups are not wired to this API.
+The frontend will use React with Vite, TanStack Router, React Context and colocated CSS Modules. The product documentation defines its folder plan, shared theme tokens, two-column Oracle/SQL dashboard, mutually exclusive animated navbar dropdowns, avatar placement, green accent and neutral charcoal dark theme. A navbar-width dropdown is a mockup candidate. These are frontend requirements; the mockups are not wired to this API.
 
 Other outstanding work includes mailbox matching/ingestion, a background scheduler, recovery-email delivery, the remaining parser catalogue, rich text/media and avatars, production deployment containers, production migrations/security and performance verification with realistic data volumes. Authentication rate limiting is Release 1.0 scope rather than PoC scope. Non-OK Recovery Area Space rules must wait for a real failing example.
 

@@ -124,7 +124,7 @@ Schedule evaluation uses exact sender/subject and received time in source-local 
 | --- | --- |
 | GET /dashboard | Open Oracle issue count and `sql.available=false`. |
 | GET /tickets | Paginated lightweight summaries with client/database names; no evidence, events, or raw email. |
-| GET /tickets/:id | Ticket, client/database, participants, and up to five previous tickets matching the same client/database/check type; timeline events are not embedded. |
+| GET /tickets/:id | Ticket, client/database, participants, and up to five matching similar tickets with the newest open match pinned first; timeline events are not embedded. |
 | GET /tickets/:id/events | Timeline in pages of 50 events. |
 | POST /tickets/:id/comments | Requires non-empty `comment`; commenting on a closed ticket does not reopen it. |
 | POST /tickets/:id/close | Comment-free closure. |
@@ -139,7 +139,9 @@ The agreed ticket design labels Database notes and Ticket notes separately. Thei
 
 ## Lists and errors
 
-Agreed UI follow-up: separate Open/Closed issue views, 50 summary rows loaded initially and 50 more automatically on scroll, then explicit Next page after 100 rows. The API returns lightweight ticket summaries, loads detail and 50-event timeline pages separately, and exposes raw email separately for lazy loading. New tickets start with one system findings event. Similar issues are the latest five previous tickets matching the same client, database and check type. See the product documentation for the confirmed navbar, dashboard, ticket tabs and neutral dark-theme design. Assessment Unresolved/Resolved semantics remain pending.
+Agreed UI follow-up: separate Open/Closed issue views, 50 summary rows loaded initially and 50 more automatically on scroll, then explicit Next page after 100 rows. The API returns lightweight ticket summaries, loads detail and 50-event timeline pages separately, and exposes raw email separately for lazy loading. New tickets start with one system findings event. See the product documentation for the confirmed navbar, dashboard, ticket tabs and neutral dark-theme design. Assessment Unresolved/Resolved semantics remain pending.
+
+**Implemented similar-issues selection:** match the same client/database/check type across older and newer tickets, exclude the current ticket, and pin the most recently created open match first. Fill the remaining slots up to five with the most recent matches regardless of status, without duplicating the pinned ticket. With no open match, return the five most recent matches; fewer matches produce fewer results. Sort recency by creation timestamp descending, then ID descending. Return ticket identifiers, numbers, titles, creation timestamps and status for links. A single database statement selects the open candidate independently of the recent candidates, deduplicates them and applies the final order/limit. An older open match is therefore included even outside the latest five. This does not merge tickets or automatically close them.
 
 Lists return `items`, `total`, `page`, and `limit`. Page defaults to 1, limit to 50; maximum limit is 200. Sorting is allowlisted and includes an ID tie-breaker. Use `sort`, `order=asc|desc`, and `q` where supported. Search uses case-insensitive PostgreSQL ILIKE matching; query performance/index tuning remains follow-up work.
 

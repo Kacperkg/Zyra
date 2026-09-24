@@ -118,9 +118,27 @@ func (r *ticketRepository) ListSummaries(ctx context.Context, q TicketListQuery)
 
 func (r *ticketRepository) FindSimilar(ctx context.Context, ticket models.Ticket, limit int) ([]SimilarTicketRow, error) {
 	rows := []SimilarTicketRow{}
-	err := r.db.WithContext(ctx).Model(&models.Ticket{}).
-		Select("id, number, title, status, created_at").
-		Where("client_id = ? AND database_id = ? AND check_type = ? AND id <> ?", ticket.ClientID, ticket.DatabaseID, ticket.CheckType, ticket.ID).
-		Order("created_at DESC, id DESC").Limit(limit).Scan(&rows).Error
+	if limit <= 0 {
+		return rows, nil
+	}
+	// Select the open candidate independently so an older unresolved issue is
+	// included even when it falls outside the most recent matches. UNION removes
+	// overlap; only the one pinned ticket receives priority over recency.
+	err := r.db.WithContext(ctx).Raw(`
+		WITH pinned AS (
+			SELECT id, number, title, status, created_at FROM tickets
+			WHERE client_id = ? AND database_id = ? AND check_type = ? AND id <> ? AND status = 'open'
+			ORDER BY created_at DESC, id DESC LIMIT 1
+		), recent AS (
+			SELECT id, number, title, status, created_at FROM tickets
+			WHERE client_id = ? AND database_id = ? AND check_type = ? AND id <> ?
+			ORDER BY created_at DESC, id DESC LIMIT ?
+		), candidates AS (
+			SELECT * FROM pinned UNION SELECT * FROM recent
+		)
+		SELECT * FROM candidates
+		ORDER BY COALESCE(id = (SELECT id FROM pinned), false) DESC, created_at DESC, id DESC
+		LIMIT ?`, ticket.ClientID, ticket.DatabaseID, ticket.CheckType, ticket.ID,
+		ticket.ClientID, ticket.DatabaseID, ticket.CheckType, ticket.ID, limit, limit).Scan(&rows).Error
 	return rows, translate(err)
 }

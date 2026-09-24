@@ -50,6 +50,8 @@ Non-OK FRA and failed-job output remains `unknown`; it is not silently passed an
 
 **Confirmed:** retain `zyra-api/` for Go and `zyra-web/` for React. The approved implementation uses Gin and GORM/PostgreSQL; the production database setup and migration policy remain open. Preserve the API's domain-specific layers and shared transaction support.
 
+**Confirmed frontend choices:** Vite, TanStack Router, React Context and colocated `.module.css` files. Use focused authentication/theme contexts and local component state; Redux and Tailwind are excluded. Keep thin route definitions separate from pages, shared UI and domain components, and domain API modules. The [frontend organization](documentation.md#113-frontend-organization) is a plan; no frontend scaffold is implemented. Server-data caching and browser token storage remain open.
+
 **Proposed:** introduce replaceable mailbox and recovery-delivery adapters, a durable ingestion lifecycle, a versioned parser contract, and background schedule execution around the existing domain services. A logical worker boundary does not require a separate deployment, queue product, or cache. Choose those only after mailbox capabilities and operational requirements are known.
 
 ### 5.2 Ingestion and assessment processing
@@ -86,6 +88,10 @@ Before enabling background evaluation, decide window boundary inclusivity, overl
 ### 5.5 Operator interface
 
 **Confirmed:** use a shared top navbar without a sidebar; separate Open/Closed Oracle issue views; a two-column Oracle/SQL dashboard with SQL disabled; and Discussion/Raw Email ticket tabs with a shared context panel. Follow [product screen requirements](documentation.md#9-screens-and-navigation) for detailed layout and themes.
+
+Only one navbar dropdown is open at a time. Navigation, outside clicks and Escape close it; provide keyboard/focus handling and subtle fade/vertical motion with reduced-motion support. A navbar-width shared panel remains a candidate for mockup review. Use the documented global CSS tokens for the approved light/neutral-dark palette, radii, fonts, shadows and motion; each component/page imports its own CSS Module.
+
+**Confirmed and implemented in the API:** Similar issues match the same client, database and check type, excluding the current ticket, and may be newer or older. Pin the most recently created open match first, then fill up to five results with the most recent remaining matches regardless of status. If no open match exists, use the five most recent. Break equal creation timestamps by ID descending. One database statement selects the open candidate independently of recent matches, deduplicates candidates and applies the final limit. The frontend will show linked ticket number, date/time and status. This helps operators compare a new issue with an unresolved morning report; it does not establish identical findings or introduce manual/automatic merging or closure.
 
 Lists load 50 summaries, automatically load the next 50 on scroll, then offer Next page at 100. Timeline events follow the same 50/100 interaction. Detail and raw source load separately; no bulk prefetch of raw email. Preserve filters in URLs and stable sorting across fetches. Database notes and Ticket notes remain separate; permissions/storage for ticket-note editing require a decision. Assessment Unresolved/Resolved labels must not be implemented with invented semantics.
 

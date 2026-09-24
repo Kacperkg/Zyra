@@ -391,7 +391,7 @@ The ticket page should show:
 - chronological system events and user comments;
 - `Comment` and `Comment and close` actions;
 - a `Reopen` action for closed tickets;
-- a right-hand context panel containing notes, linked client, linked database, participants, and the five most recent similar issues.
+- a right-hand context panel containing notes, linked client, linked database, participants, and up to five similar issues ordered as described below.
 
 **Discussion** is the default tab. Its first timeline entry is one system-generated comment describing the findings for this ticket, not merely saying a check failed. Keep multiple findings belonging to the ticket inside that single comment, using a compact list or table:
 
@@ -406,7 +406,9 @@ Findings and effective thresholds are snapshots from assessment processing, not 
 
 Keep the ticket title, metadata and context panel visible across both tabs. Move the context panel below the main content on mobile.
 
-**Recent similar issues** contains up to five previous tickets for the same client, database and issue type, newest first, excluding the current ticket. Each entry links to that ticket and displays its number, date and Open/Closed status. This is a navigation rule, not a decision to merge repeated failures or automatically close tickets.
+**Similar issues** contains up to five tickets matching the same client, database and check/issue type, excluding the current ticket. Pin the most recently created open matching ticket first, if one exists. Fill the remaining slots with the most recently created matching tickets regardless of status, excluding the pinned ticket. If no open match exists, show the five most recent matches. Matches may be newer or older than the current ticket. Order equal creation timestamps by ticket ID descending for deterministic results; return fewer than five when fewer matches exist.
+
+Each entry links to that ticket and displays its number, creation date/time and Open/Closed status. For example, an unresolved morning Tablespace ticket appears first when investigating a new Tablespace ticket for that same client/database, helping the operator assess whether they concern the same problem. A matching check type alone does not prove identical findings. This navigation rule does not merge tickets or change their status. Automatic merging/closure remains deferred, and a manual merge action has not been specified. The API implements this selection in the ticket detail response using a single database query.
 
 Comments should support a controlled rich-text subset: paragraphs, headings/body sizes, bold, italic, underline, lists, alignment, links, text colour, images, and GIFs. Content must be sanitized on the server. Uploaded files require type/size limits and should be served from authenticated storage; arbitrary embedded HTML or JavaScript is not allowed.
 
@@ -433,6 +435,8 @@ Use the same responsive top navbar throughout the application, with no sidebar:
 - Theme control and avatar/profile button at the top-right.
 
 SQL options remain visibly unavailable during the PoC. The assessment dropdown labels are agreed, but the exact Unresolved/Resolved semantics remain pending. Proposed interpretation: Passed/Failed describes the assessment result, while Unresolved/Resolved reflects whether associated tickets still require attention. Do not implement that proposal as a settled rule. Closing tickets never changes the historical assessment result.
+
+Only one navbar dropdown may be open at a time. Opening another replaces the active dropdown; selecting a navigation link, clicking outside, or pressing Escape closes it. Use a subtle fade and short vertical transition, respecting reduced-motion preferences. Triggers expose their expanded state and support keyboard use; Escape returns focus to the triggering control. A shared dropdown panel spanning the navbar width is a candidate for the next mockup, not a finalized width requirement. Keep its Oracle/SQL columns compact and aligned with the navigation.
 
 ### 9.2 Dashboard
 
@@ -467,7 +471,24 @@ Users can change their own display details, password, theme, and profile picture
 
 ### 9.6 Visual direction
 
-Light is the default theme and green is the sole accent colour. Dark mode uses neutral charcoal surfaces, subtle grey borders and soft white text, not green-tinted backgrounds. Reserve green primarily for links and primary actions. Use restrained typography, spacing and decoration; avoid gradients, oversized rounded cards and excessive shadows. The exact font remains undecided. Mockup data and interactions illustrate the design, not implemented or live functionality.
+Light is the default theme and green is the sole accent colour. Dark mode uses neutral charcoal surfaces, subtle grey borders and soft white text, not green-tinted backgrounds. Reserve green primarily for links and primary actions. Use restrained typography, spacing and decoration; avoid gradients, oversized rounded cards and excessive shadows. Use the approved system sans-serif stack (`-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `sans-serif`), with a system monospace stack for technical values. Mockup data and interactions illustrate the design, not implemented or live functionality.
+
+Define shared CSS custom properties in `src/styles/tokens.css`; component/page CSS modules consume them instead of repeating literal colours and radii. `ThemeContext` sets `data-theme="light"` or `data-theme="dark"` on the root HTML element. Theme preference persistence remains an implementation decision.
+
+| Token | Light | Neutral dark |
+| --- | --- | --- |
+| `--color-background` | `#f6f7f6` | `#171717` |
+| `--color-surface` | `#ffffff` | `#222222` |
+| `--color-surface-subtle` | `#eaf3ed` | `#2c2c2c` |
+| `--color-text` | `#26332b` | `#e8e8e8` |
+| `--color-text-muted` | `#69766d` | `#aaaaaa` |
+| `--color-border` | `#dde4df` | `#393939` |
+| `--color-accent` | `#176e43` | `#71c795` |
+| `--color-on-accent` | `#ffffff` | `#172019` |
+| `--color-focus-ring` | `rgba(23, 110, 67, 0.25)` | `rgba(113, 199, 149, 0.3)` |
+| `--shadow-dropdown` | `0 8px 24px rgba(0, 0, 0, 0.07)` | `0 8px 24px rgba(0, 0, 0, 0.22)` |
+
+Shared geometry tokens: `--radius-small: 3px`, `--radius-control: 4px`, `--radius-panel: 5px`, `--radius-shell: 7px`, `--radius-round: 999px`, and `--content-width: 1200px`. Motion tokens: `--transition-fast: 120ms ease` and `--transition-standard: 180ms ease`. Disable nonessential motion when reduced motion is requested. Validate contrast and keyboard focus visibility during frontend implementation.
 
 ## 10. Authentication and account recovery
 
@@ -507,12 +528,23 @@ zyra/
         ├── api/
         ├── assets/
         ├── components/
+        │   ├── layout/
+        │   ├── navigation/
+        │   ├── tickets/
+        │   └── ui/
+        ├── contexts/
+        ├── hooks/
         ├── pages/
         ├── routes/
+        ├── styles/
+        │   ├── tokens.css
+        │   ├── reset.css
+        │   └── globals.css
+        ├── types/
+        ├── utils/
         ├── main.tsx
         ├── router.tsx
-        ├── routeTree.gen.ts
-        └── styles.css
+        └── routeTree.gen.ts
 ```
 
 Zyra will be a monorepo. The Go API lives in `zyra-api/`, while the React application lives in `zyra-web/` with its application source under `zyra-web/src/`.
@@ -522,10 +554,24 @@ Within the API layers, use domain-specific files wherever applicable: for exampl
 ### 11.2 Components
 
 - **`zyra-api`:** Go API.
-- **`zyra-web`:** React web application.
+- **`zyra-web`:** React application built with Vite, using TanStack Router, React Context and CSS Modules.
 - **Development database:** PostgreSQL.
 
 The production database setup, background-processing model, file and email storage approach, caching, queues, and other supporting infrastructure have not been decided.
+
+### 11.3 Frontend organization
+
+This is the agreed direction for planning; no frontend scaffold is implied by the directory diagram.
+
+- `api/`: shared HTTP client and domain endpoint modules such as `tickets.api.ts`.
+- `routes/`: thin TanStack Router route definitions; screen composition belongs in `pages/`. `routeTree.gen.ts` is generated by routing tooling.
+- `pages/`: domain folders such as `tickets/`, `clients/`, `databases/`, `assessments/`, `dashboard/` and `auth/`; each page imports its own colocated `.module.css`.
+- `components/`: reusable UI under `ui/`, shell/navigation under their respective folders, and domain components under folders such as `tickets/`. Larger components can own a folder containing their component, CSS module and related private components.
+- `contexts/`: focused `AuthContext` and `ThemeContext`; use React Context rather than Redux. Keep forms, filters and other page-local state local, and avoid copying all server data into a global context. Server-data fetching/cache strategy remains open.
+- `hooks/`, `types/`, `utils/` and `assets/`: shared hooks, API/domain types, utilities and bundled assets respectively.
+- `styles/`: global tokens, browser reset and base typography only. Use CSS Modules for component/page styling; do not add Tailwind.
+
+Create domain folders as their features are introduced rather than scaffolding empty future areas. Authentication context must preserve the 15-minute access/fixed seven-day session contract without prematurely selecting browser token storage.
 
 ## 12. Core data model
 
@@ -561,7 +607,7 @@ Important integrity rules:
 
 ## 13. API outline
 
-See the [API plan](zyra-api/doc/API.md) for the expanded draft operation inventory, responsibilities, and decisions needed before implementation.
+See the [API contract](zyra-api/doc/API.md) for implemented operations and remaining work.
 
 The following remains the product-level operation outline. For exact implemented methods, `/api` paths, payloads, and deferred operations, use the [API contract](zyra-api/doc/API.md).
 
