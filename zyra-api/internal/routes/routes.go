@@ -1,0 +1,63 @@
+package routes
+
+import (
+	"github.com/gin-gonic/gin"
+	"zyra-api/internal/handlers"
+	"zyra-api/internal/middleware"
+	"zyra-api/internal/services"
+)
+
+func New(s *services.Service) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	h := handlers.New(s)
+	api := r.Group("/api")
+	api.POST("/auth/login", h.Login)
+	api.POST("/auth/refresh", h.Refresh)
+	api.POST("/auth/forgot-password", h.Forgot)
+	api.POST("/auth/reset-password", h.Reset)
+	protected := api.Group("", middleware.Auth(s))
+	protected.POST("/auth/logout", h.Logout)
+	protected.GET("/users/me", h.Me)
+	protected.PATCH("/users/me", h.SaveUser)
+	protected.POST("/users/me/password", h.ChangePassword)
+	protected.GET("/dashboard", h.Dashboard)
+	protected.GET("/clients", h.List("clients"))
+	protected.POST("/clients", h.SaveClient)
+	protected.GET("/clients/:id", h.Get("clients"))
+	protected.PATCH("/clients/:id", h.SaveClient)
+	protected.DELETE("/clients/:id", h.Archive("clients"))
+	protected.GET("/databases", h.List("databases"))
+	protected.POST("/databases", h.SaveDatabase)
+	protected.GET("/databases/:id", h.Get("databases"))
+	protected.PATCH("/databases/:id", h.SaveDatabase)
+	protected.DELETE("/databases/:id", h.Archive("databases"))
+	protected.GET("/databases/:id/check-settings", h.Settings)
+	protected.PUT("/databases/:id/check-settings", h.PutSettings)
+	protected.GET("/databases/:id/email-sources", h.Sources)
+	protected.POST("/databases/:id/email-sources", h.SaveSource)
+	protected.PUT("/email-sources/:source_id", h.SaveSource)
+	protected.GET("/email-sources/:source_id", h.Source)
+	protected.DELETE("/email-sources/:source_id", middleware.Admin(), h.DisableSource)
+	protected.GET("/email-sources/:source_id/schedules", h.Schedules)
+	protected.PUT("/email-sources/:source_id/schedules", h.Schedules)
+	protected.GET("/databases/:id/assessments", h.List("assessments"))
+	protected.GET("/assessments/:id", h.Get("assessments"))
+	protected.GET("/assessments/:id/raw-email", h.Raw)
+	protected.POST("/databases/:id/assessments", middleware.Admin(), h.Submit)
+	protected.GET("/tickets", h.List("tickets"))
+	protected.GET("/tickets/:id", h.Ticket)
+	protected.GET("/tickets/:id/events", h.Events)
+	protected.POST("/tickets/:id/comments", h.Action("comment"))
+	protected.POST("/tickets/:id/close", h.Action("close"))
+	protected.POST("/tickets/:id/comment-and-close", h.Action("comment_and_close"))
+	protected.POST("/tickets/:id/reopen", h.Action("reopen"))
+	admin := protected.Group("/admin", middleware.Admin())
+	admin.POST("/schedules/evaluate", h.EvaluateSchedules)
+	admin.GET("/users", h.List("users"))
+	admin.POST("/users", h.SaveUser)
+	admin.PATCH("/users/:id", h.SaveUser)
+	admin.GET("/users/:id/closed-tickets", h.List("tickets"))
+	return r
+}

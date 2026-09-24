@@ -1,0 +1,7 @@
+# Local configuration and build artifacts
+.env
+.env.*
+!.env.example
+bin/
+coverage.out
+*.test
