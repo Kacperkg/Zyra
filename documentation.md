@@ -2,7 +2,7 @@
 
 Zyra is a self-hosted monitoring and ticket-management application for Oracle database health-check emails. It receives assessment emails produced by existing server-side scripts, parses their contents, records every assessment, and raises actionable tickets when a check fails or an expected email is missing.
 
-This document defines the initial product scope and proposed technical design. The MVP is a proof of concept (PoC) used to validate the core Oracle daily-check workflow before Release 1.0; implementation has not started.
+This document defines the initial product scope and technical design. The MVP is a proof of concept (PoC) used to validate the core Oracle daily-check workflow before Release 1.0. An initial Go API implementation exists, but live mailbox ingestion, the React interface, production deployment and several parser/infrastructure decisions remain incomplete.
 
 ## 1. Goals
 
@@ -161,6 +161,8 @@ The daily-check parser must also handle the format shown in the first supplied a
 - Windows paths, spacing, case differences, old Oracle versions, and forwarded email formatting must be preserved or normalized safely without breaking section recognition;
 - `ReportOn` is the assessment time. The received-at time is stored separately.
 
+Daily checks may run on Windows or Linux. Accept both Windows `Filesystem Usage` drive rows and Linux `Filesystem Mounted Use%` tables. Linux filesystem rules identify resources by mount point, preserving the device/source in evidence. Linux reports may end with `Script`, `Version`, `Run by`, and schedule metadata without a `Script Info` heading; this is a valid layout, not itself evidence of a missing or incomplete email. Required database-check content must still be present.
+
 For this report format, `Script Info` identifies where the check ran. From a value such as `Run by: username@hostname`, the parser must extract only the portion after the final `@` as the observed execution hostname; the username is not part of the connection target. Zyra then matches the observed hostname to a configured database server record containing a canonical hostname and optional IP address. Both the observed value and the matched server identity must be stored. If no server matches, the assessment remains processable but shows an explicit `Unmatched host` warning for administrative review rather than silently attaching an incorrect IP.
 
 Zyra should not depend on live DNS lookup when a user opens a ticket. Hostname and IP displayed on an assessment or ticket should be immutable snapshots taken when the assessment is processed, with links to the current server configuration. This ensures an older ticket still shows the original connection target after a server migration or IP change.
@@ -277,7 +279,7 @@ The ticket evidence should include:
 - the received time;
 - the script path;
 - the execution hostname parsed from `Run by`;
-- a link to the raw email body.
+- the original body in the ticket's Raw Email tab.
 
 Completeness is determined using the expected structure for the matched email source and parser version. A trailing `Filesystem Usage` or `Script Info` section does not make the assessment valid when the main database-check output is missing. Partial check data in an incomplete email must not create ordinary check tickets, because the report did not complete reliably. The one Missing Email ticket represents the failed assessment run.
 
@@ -296,7 +298,7 @@ Dest.Id    Destination    Status    Error
 
 When Archive Destinations is selected for that database, the non-empty invalid-destinations table creates one **Archive Destinations** ticket. All failing destination rows from the assessment belong to that single ticket rather than producing one ticket per row.
 
-The ticket should include the destination ID, reported destination/status fields, complete Oracle error text available in the raw message, database, assessment time, hostname/IP, and a raw-email link. The supplied pasted formatting may not preserve the original fixed-width column alignment, so the parser fixture must be built from the original raw email before finalising the exact column mapping; Zyra must not silently swap the destination and status values.
+The ticket should include the destination ID, reported destination/status fields, complete Oracle error text available in the raw message, database, assessment time, hostname/IP, and a Raw Email tab. The supplied pasted formatting may not preserve the original fixed-width column alignment, so the parser fixture must be built from the original raw email before finalising the exact column mapping; Zyra must not silently swap the destination and status values.
 
 Other sections in this email show `OK!`; they are recorded as passed only when they are selected for this database. `Backups=NOT_US` means backups for this database are not the responsibility of the company using Zyra. The assessment should display this as `Not managed by us` (or equivalent wording), and it must not create a Backups ticket. Filesystem results create tickets only if Filesystem is selected/configured for this database and its rules are breached.
 
@@ -315,6 +317,8 @@ Initial rule shapes include:
 | Archive destinations | Destination, enabled or ignored, and acceptable status. |
 | FRA/recovery area | Enabled or ignored and maximum usage/minimum free threshold. |
 | Missing email | Expected schedule window, timezone, grace period, enabled or ignored. |
+
+TODO — Recovery Area Space: await a real failing email example before finalising non-OK parsing, failure criteria, and ticket/system-comment details. `RecoveryAreaSpace=OK!` means passed when selected; other output is likely an issue but is not yet a confirmed blanket ticket-creation rule. Keep the current non-OK result as `unknown` until this is fleshed out.
 
 Checks or resources without matching configuration should be skipped as `not_evaluated` and may be displayed for configuration review. Zyra must not silently choose a threshold or create a ticket for an unconfigured check, mount, tablespace, disk group, or backup target.
 
@@ -348,20 +352,17 @@ For the worked email example, suitable titles are:
 
 ### 8.2 Creation and deduplication
 
-The exact repeat-failure policy must be configurable or confirmed before implementation. Recommended PoC behaviour:
+The cross-assessment repeat-failure policy is unresolved. The current API creates tickets for each distinct report and does not merge later failures into an existing open ticket. Before changing that behaviour, decide whether a repeated failure should append an occurrence to an open ticket or create a new ticket. Do not present either option as the confirmed PoC policy.
 
-- create one open ticket per database, assessment type, check type, and resource identity;
-- when the same failure occurs while that ticket is open, attach the new occurrence to it and update `last seen` and occurrence count;
-- when the previous ticket is closed and the failure happens again, create a new ticket and link it as a similar issue;
-- never merge unrelated resources (for example two different filesystems) solely because their check type is the same.
+Regardless of that later decision, repeated ingestion of the same email must remain idempotent, unrelated resources must not be merged solely because their check type matches, and previous tickets remain available through Recent similar issues.
 
 ### 8.3 Ticket list
 
-The Oracle issues page lists both current and historical tickets and supports:
+Open and Closed Oracle issues are separate views, reached through the Issues navbar dropdown or dashboard buttons. The default operational view contains only open tickets. Do not include an All/Open/Closed switch on the issues page itself. Each view supports:
 
-- filters for client, database, ticket/check type, created date, assessment type, and status;
+- filters for client, database, ticket/check type, created date, and assessment type, within the selected status view;
 - sorting by ticket number, check type, created date/time, client, database, and assessment type;
-- pagination;
+- 50 tickets initially, another 50 loaded automatically when scrolling near the bottom, then Next page after at most 100 tickets; each new page starts with 50 again (or fewer if fewer remain). No Load more button. Do not request more once the results are exhausted;
 - a clear empty state and loading state;
 - persistent filters in the URL so a view can be bookmarked or shared.
 
@@ -378,42 +379,68 @@ Default column order:
 
 Closed tickets remain searchable and visible.
 
+Ticket lists fetch summary fields only: identifiers, check type, created timestamp, client/database display information, assessment type, and status. Do not preload comments, full findings/evidence, or raw email bodies. Selecting a row navigates to a ticket detail route such as `/tickets/{ticketId}` and loads its detail data. The 100-row UI page and 50-row fetch batch are distinct; preserve stable ordering across batches.
+
 ### 8.4 Ticket detail
 
 The ticket page should show:
 
 - issue title, status, ticket number, client, database, execution hostname, IP address, and timestamps;
-- a link to the source assessment and a read-only view of the sanitized raw email;
+- a link to the source assessment and Discussion/Raw Email tabs directly below the title and metadata;
 - parsed evidence and all linked occurrences;
 - chronological system events and user comments;
 - `Comment` and `Comment and close` actions;
 - a `Reopen` action for closed tickets;
 - a right-hand context panel containing notes, linked client, linked database, participants, and the five most recent similar issues.
 
+**Discussion** is the default tab. Its first timeline entry is one system-generated comment describing the findings for this ticket, not merely saying a check failed. Keep multiple findings belonging to the ticket inside that single comment, using a compact list or table:
+
+- Backups: describe the reported problem and affected targets/datafiles. Mention newly added datafiles only when the report explicitly identifies them; do not infer a cause.
+- Tablespaces: identify affected names, reported percentages clearly labelled free or used, and the configured thresholds.
+- Filesystem: identify Windows disks or Linux mounts, usage percentages and configured maximums; retain device/source details where available.
+- Other checks: identify affected resources and relevant reported evidence. Distinguish absent emails from received-but-incomplete reports.
+
+Findings and effective thresholds are snapshots from assessment processing, not values recalculated from current configuration. Failed results from one assessment are grouped into one ticket per check type, so all backup flags, affected tablespaces, or affected filesystem resources for that check appear together in its single system findings event. User comments and status changes follow chronologically. Request 50 timeline events initially, another 50 automatically on scroll, then move to the next 100-event UI page rather than embedding an unbounded timeline in ticket detail.
+
+**Raw Email** displays the original body as read-only text with preserved whitespace/line breaks and horizontal scrolling when needed. Show subject, sender and received time above it. Load the body when the tab opens; do not use a separate raw-email link or open a separate page. Treat content as text, never executable HTML. When no email arrived, show an explicit No email received state rather than an empty viewer.
+
+Keep the ticket title, metadata and context panel visible across both tabs. Move the context panel below the main content on mobile.
+
+**Recent similar issues** contains up to five previous tickets for the same client, database and issue type, newest first, excluding the current ticket. Each entry links to that ticket and displays its number, date and Open/Closed status. This is a navigation rule, not a decision to merge repeated failures or automatically close tickets.
+
 Comments should support a controlled rich-text subset: paragraphs, headings/body sizes, bold, italic, underline, lists, alignment, links, text colour, images, and GIFs. Content must be sanitized on the server. Uploaded files require type/size limits and should be served from authenticated storage; arbitrary embedded HTML or JavaScript is not allowed.
 
 Every status change is an immutable timeline event showing who performed it and when.
+
+Confirmed ticket interaction decisions:
+
+- Show separately labelled **Database notes** and **Ticket notes**. Database notes apply across the database's tickets; ticket notes apply only to that issue. Editing one must not overwrite the other. Editing permissions remain to be specified.
+- Allow comments on closed tickets without reopening them. Reopening requires the explicit Reopen action.
+- **Comment and close** requires a non-empty comment and saves the comment and closure atomically. Closing without a comment, if offered, must use a separate **Close** action rather than submitting an empty Comment and close.
+- Automatic ticket closure is deferred pending further design. For now, a passing assessment or late-arriving email must not automatically close an existing ticket. Cross-report failure grouping remains a separate unresolved decision.
 
 ## 9. Screens and navigation
 
 ### 9.1 Shared navigation
 
-The same responsive navigation appears throughout the application and includes:
+Use the same responsive top navbar throughout the application, with no sidebar:
 
-- dashboard;
-- Oracle issues;
-- clients;
-- databases/search;
-- user profile and theme control;
-- administration links when authorised.
+- Dashboard.
+- Issues: a two-column dropdown titled Oracle and SQL, each containing Open and Closed.
+- Assessments: a two-column dropdown titled Oracle and SQL, each containing Unresolved, Resolved, Passed, Failed and All.
+- Clients.
+- Settings & maintenance: a placeholder for later; its contents are outside the PoC.
+- Theme control and avatar/profile button at the top-right.
+
+SQL options remain visibly unavailable during the PoC. The assessment dropdown labels are agreed, but the exact Unresolved/Resolved semantics remain pending. Proposed interpretation: Passed/Failed describes the assessment result, while Unresolved/Resolved reflects whether associated tickets still require attention. Do not implement that proposal as a settled rule. Closing tickets never changes the historical assessment result.
 
 ### 9.2 Dashboard
 
-The PoC dashboard contains an `Open Oracle Issues` summary card with the current count and a link to the filtered Oracle issues page.
-
-Release 1.0 adds an `Open SQL Issues` card and its related SQL issue pages. The PoC must not imply that SQL monitoring is active before that work is implemented.
+The dashboard contains only two equal columns, Oracle and SQL, stacked on mobile. Oracle shows its open-ticket count with separate Open and Closed navigation buttons. SQL mirrors this layout as a clearly unavailable placeholder, with navigation disabled until Release 1.0. Do not imply that SQL monitoring is active. No charts, activity feeds, extra statistics or widgets.
 
 ### 9.3 Client page
+
+One client record can contain both Oracle and SQL databases. Identify the engine for each database and integrate both into the client's database list; do not create separate client records per engine. Actual SQL monitoring remains Release 1.0 scope.
 
 - client details;
 - searchable list of configured databases;
@@ -438,6 +465,10 @@ Selecting an assessment email source opens a detail page or panel where trusted 
 
 Users can change their own display details, password, theme, and profile picture. Admins can list users, manage roles/status, and view the tickets closed by a selected user.
 
+### 9.6 Visual direction
+
+Light is the default theme and green is the sole accent colour. Dark mode uses neutral charcoal surfaces, subtle grey borders and soft white text, not green-tinted backgrounds. Reserve green primarily for links and primary actions. Use restrained typography, spacing and decoration; avoid gradients, oversized rounded cards and excessive shadows. The exact font remains undecided. Mockup data and interactions illustrate the design, not implemented or live functionality.
+
 ## 10. Authentication and account recovery
 
 - Access tokens use JWT (JSON Web Token) and expire after 15 minutes.
@@ -445,9 +476,11 @@ Users can change their own display details, password, theme, and profile picture
 - While the refresh session is valid, the application can obtain a new access token without requiring the user to sign in again.
 - Password-recovery support for user accounts.
 
-JWT is the confirmed access-token format. The JWT signing algorithm and library, refresh-token format, browser storage location, refresh-token rotation, password-hashing algorithm, password-recovery mechanism, and session revocation behaviour remain undecided. Any access token issued near the seven-day session deadline must expire no later than that deadline so access cannot continue beyond it without signing in again.
+The initial API uses the approved JWT/bcrypt approach: HS256 JWTs via golang-jwt/jwt/v5, hashed random refresh tokens rotated on use, and server-side session revocation checks. Browser storage and recovery-email delivery remain open. Any access token issued near the seven-day session deadline must expire no later than that deadline so access cannot continue beyond it without signing in again.
 
 ## 11. Proposed architecture
+
+The initial Go API is implemented using the approved Gin and GORM/PostgreSQL stack. See the [API contract](zyra-api/doc/API.md) for working routes, run instructions, limitations, and remaining work.
 
 ### 11.1 Monorepo layout
 
@@ -483,6 +516,8 @@ zyra/
 ```
 
 Zyra will be a monorepo. The Go API lives in `zyra-api/`, while the React application lives in `zyra-web/` with its application source under `zyra-web/src/`.
+
+Within the API layers, use domain-specific files wherever applicable: for example, `models/ticket_model.go`, `repository/ticket_repository.go`, `services/ticket_service.go`, and `handlers/ticket_handler.go`. Apply the same convention to other domains, keeping shared infrastructure/helpers shared and omitting layers a feature does not need.
 
 ### 11.2 Components
 
@@ -526,7 +561,9 @@ Important integrity rules:
 
 ## 13. API outline
 
-The API interface has not been designed. The following is only an illustrative list of operations Zyra will need; the route names, versioning, request formats, and transport details are not decided:
+See the [API plan](zyra-api/doc/API.md) for the expanded draft operation inventory, responsibilities, and decisions needed before implementation.
+
+The following remains the product-level operation outline. For exact implemented methods, `/api` paths, payloads, and deferred operations, use the [API contract](zyra-api/doc/API.md).
 
 ```text
 POST   /auth/login
@@ -565,7 +602,7 @@ GET    /admin/users
 GET    /admin/users/{userId}/closed-tickets
 ```
 
-Ticket and assessment lists need filtering, stable sorting, and pagination. The implementation approach has not been decided.
+The initial API uses page/limit pagination with allowlisted filtering and stable sorting. The API contract lists the currently supported filters.
 
 ## 14. Performance and usability
 
@@ -577,7 +614,7 @@ Loading speed is a primary requirement. Initial targets:
 - responsive layouts and keyboard-accessible controls;
 - readable colour contrast in both themes.
 
-Exact performance targets and the search, pagination, caching, and frontend optimisation approaches have not been decided. They should be chosen after the expected usage and data volume are understood.
+The ticket loading interaction is agreed: 50-row batches, automatic scroll loading up to 100 rows per UI page, then explicit pagination. List responses contain summaries only; details, timeline pages, and raw email load separately. Initial PostgreSQL indexes cover the implemented status/date, client/database/check/assessment-type, closure-history, assessment-history/schedule, similar-ticket and timeline query paths. Exact performance targets, search optimisation, database pagination strategy, caching and other frontend optimisations remain open and should be validated against realistic volumes.
 
 ## 15. Testing strategy
 
@@ -592,7 +629,7 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 - A golden-file test for the Archive Destinations email that groups all invalid destination rows into one Archive Destinations ticket when that check is selected.
 - An assertion that `Backups=NOT_US` is shown as not managed by the company and never creates a Backups ticket.
 - Tests for rendered/copied email artefacts, including HTML entities, non-breaking spaces, tabs, bold markers, and escaped punctuation.
-- Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies.
+- Tests for truncated, reordered, duplicated, forwarded, HTML-only, and unexpected email bodies. A Windows report ending at the literal `Script Info` heading without an actual `Run by` footer is incomplete; valid Windows and Linux footer layouts remain accepted.
 - Schedule tests across timezones, daylight-saving changes, grace periods, and late arrivals.
 - Idempotency and concurrency tests for duplicated messages and workers.
 - Permission tests for every protected API operation.
@@ -601,6 +638,8 @@ Exact performance targets and the search, pagination, caching, and frontend opti
 - Authentication, permission, and untrusted-content tests appropriate to the implementation choices made later.
 
 Production parser fixtures must be anonymised and must not contain client credentials or sensitive database information.
+
+The API includes an isolated Docker Compose PostgreSQL service for local integration testing. It binds to localhost, uses test-only credentials and temporary storage, and is not the persistent self-hosted deployment design.
 
 ## 16. Proof-of-concept acceptance criteria
 
@@ -618,7 +657,7 @@ The PoC is ready for an internal pilot when:
    The supplied incomplete-script example creates one Missing Email ticket with the Oracle failure as evidence and does not create ordinary tickets from its partial body.
    The supplied archive-destination example creates one grouped Archive Destinations ticket when that check is selected, regardless of how many invalid destination rows it contains. Its `Backups=NOT_US` value creates no Backups ticket.
 8. Users can filter and sort Oracle tickets, view an issue timeline, comment, comment-and-close, close, and reopen.
-9. Ticket pages link to the client, database, source assessment/raw email, participants, and five similar issues.
+9. Ticket pages show a system findings comment, Discussion/Raw Email tabs, client/database/source-assessment links, participants, separate database/ticket notes, and up to five linked previous issues matching the same client/database/check type.
    They also show the execution hostname and configured IP address captured when the assessment was processed.
 10. Admins can see which tickets a user closed.
 11. Light and dark themes work, with light as the default, and users can update their profile picture.
@@ -659,6 +698,7 @@ The PoC is ready for an internal pilot when:
 
 - Add SQL checks and SQL issue pages.
 - Add ingestion and ticket behaviour for the standby-alert email that runs every 30 minutes.
+- Add authentication rate limiting using limits and shared-state infrastructure selected during Release 1.0 design; it is not part of the PoC implementation.
 - Reuse the proven client, database, assessment, ticket, comment, role, and history workflows from the PoC.
 
 ## 18. Decisions needed before implementation
@@ -667,14 +707,15 @@ The PoC is ready for an internal pilot when:
 2. What are the exact AM/PM schedule windows, timezone, and allowed grace periods for each database?
 3. What real email formats and script versions must the first parser support?
 4. Which checks are mandatory for the first pilot, and what are their precise pass/fail rules?
-5. Should a late valid email automatically close its missing-email ticket or only add a recovery event for manual review?
-6. Should repeated failures update one open ticket (the recommendation here) or create a ticket per assessment?
+5. Automatic closure is deferred: what recovery and late-arrival behaviour should be designed later? No automatic closure for now.
+6. Should repeated failures update one open ticket or create a ticket per assessment? Neither option is currently the confirmed future policy.
 7. Can normal users close/reopen tickets, or should that be limited to trusted users and admins?
-8. Are client/database notes global notes, ticket-specific notes, or both?
+8. Who may edit database-wide notes and ticket-specific notes? Their separate scopes are agreed.
 9. What retention period and access rules apply to raw emails and attachments?
 10. How should raw emails, profile pictures, comment images/GIFs, and other uploaded files be stored?
-11. Which JWT signing algorithm/library, refresh-token format, browser storage, refresh-token rotation, password hashing, and password-recovery mechanism will be used?
+11. Which browser token storage and password-recovery email delivery will be used? The initial signing, hashing, rotation, and session implementation is documented in the API guide.
 12. What security, privacy, logging, monitoring, backup, and operational requirements are needed before production?
+13. What exactly do Unresolved and Resolved mean for assessments, including assessments with multiple tickets or no tickets?
 
 ## 19. Future extensions
 
